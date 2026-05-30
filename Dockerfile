@@ -21,8 +21,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 
-# Expose port 8080 (standard for Cloud Run)
+# Expose port 8080
 EXPOSE 8080
 
-# Start FastAPI application
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8080"]
+# Configure Python path so modules import correctly from subfolders
+ENV PYTHONPATH=/app/backend
+
+# Start FastAPI application, binding to the port provided by Cloud Run
+CMD uvicorn backend.app:app --host 0.0.0.0 --port $PORT
