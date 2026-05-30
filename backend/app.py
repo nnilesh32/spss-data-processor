@@ -328,8 +328,9 @@ def export_data_dictionary(format: str = "excel"):
 # to make local deployment extremely easy.
 from fastapi.staticfiles import StaticFiles
 
-# Create frontend dir if not exists
-frontend_dir = "/Users/nileshjadhav/Desktop/SPSS/frontend"
+# Create frontend dir if not exists relative to this file
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+frontend_dir = os.path.join(os.path.dirname(backend_dir), "frontend")
 os.makedirs(frontend_dir, exist_ok=True)
 
 # Serve static files at root
