@@ -1,0 +1,31 @@
+# Virtual Environment
+venv/
+.venv/
+ENV/
+
+# Python cache / compiled byte code
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Large SPSS data files (except the sample file for tests)
+*.sav
+!sample_data.sav
+
+# Local IDE/editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
