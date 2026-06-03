@@ -29,7 +29,17 @@ class TestSPSSParser(unittest.TestCase):
         self.assertEqual(len(dictionary), 9)
         gender_var = next(v for v in dictionary if v['variable_name'] == 'Gender')
         self.assertEqual(gender_var['variable_label'], 'Gender of Respondent')
-        self.assertIn('1.0 = Male', gender_var['value_labels'])
+        self.assertIn('1 = Male', gender_var['value_labels'])
+        
+        # Verify the new SPSS Variable View properties
+        self.assertEqual(gender_var['spss_type'], 'Numeric')
+        self.assertEqual(gender_var['width'], 8)
+        self.assertEqual(gender_var['decimals'], 2)
+        self.assertEqual(gender_var['values_preview'], '{1, Male}...')
+        self.assertEqual(gender_var['missing_values'], 'None')
+        self.assertEqual(gender_var['display_columns'], 8)
+        self.assertEqual(gender_var['alignment'], 'Right')
+        self.assertEqual(gender_var['measurement'], 'Nominal')
 
     def test_get_variable_stats(self):
         stats = get_variable_stats(self.df, self.meta, 'Satisfaction')

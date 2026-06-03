@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPSS Online Data Processor</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v=1.0.3">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js -->
@@ -22,20 +22,27 @@
                 <h1>SPSS Data Processor</h1>
             </div>
         </div>
+
+        <!-- Header Navigation Menu (Visible once dataset is loaded) -->
+        <div class="header-nav" id="header-nav" style="display: none;">
+            <button class="header-nav-btn" id="btn-home" onclick="goHome()" title="Go back to Home / Upload page">
+                <i data-lucide="home"></i> Home
+            </button>
+            <button class="header-nav-btn active" id="header-btn-variables" onclick="switchNavMenu('variables')">
+                <i data-lucide="database"></i> Variable View
+            </button>
+            <button class="header-nav-btn" id="header-btn-data" onclick="switchNavMenu('data')">
+                <i data-lucide="table"></i> Data View
+            </button>
+            <button class="header-nav-btn" id="header-btn-frequency" onclick="switchNavMenu('frequency')">
+                <i data-lucide="bar-chart-3"></i> Frequency Analysis
+            </button>
+            <button class="header-nav-btn" id="header-btn-crosstabs" onclick="switchNavMenu('crosstabs')">
+                <i data-lucide="grid"></i> Cross-Tabulation
+            </button>
+        </div>
         
         <div class="header-actions" id="header-actions" style="display: none;">
-            <div class="stats-banner">
-                <div class="stat-card" style="padding: 0.25rem 0.5rem; gap: 0.35rem; background: transparent; border: none;">
-                    <i data-lucide="file-text" style="color: var(--accent-cyan); width: 14px;"></i>
-                    <span id="active-filename" style="font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">file.sav</span>
-                </div>
-            </div>
-            <button class="btn btn-secondary" id="btn-export-csv">
-                <i data-lucide="download"></i> Export CSV
-            </button>
-            <button class="btn btn-primary" id="btn-export-excel">
-                <i data-lucide="file-spreadsheet"></i> Export Excel
-            </button>
             <button class="btn btn-secondary btn-icon-only" id="btn-toggle-theme" title="Toggle Light/Dark Theme">
                 <i data-lucide="moon" id="theme-icon" style="width: 14px; height: 14px;"></i>
             </button>
@@ -63,248 +70,384 @@
                 <div class="spinner"></div>
                 <p style="color: var(--text-secondary); font-size: 0.85rem;">Processing SPSS dataset... Parsing variable schemas...</p>
             </div>
-        </div>
 
-        <!-- Working Workspace Dashboard (Hidden until file is loaded) -->
-        <div class="sidebar" id="sidebar" style="display: none;">
-            <div class="sidebar-header">
-                <div class="search-container">
-                    <i data-lucide="search"></i>
-                    <input type="text" id="search-input" placeholder="Search variables or labels...">
+            <!-- Existing Datasets Section -->
+            <div id="existing-projects-container" style="display: none; width: 100%; max-width: 500px; margin-top: 1.5rem;">
+                <div class="card" style="padding: 0.75rem; width: 100%; gap: 0.5rem;">
+                    <h3 style="font-size: 0.8rem; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 0.35rem; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 0.35rem;">
+                        <i data-lucide="history" style="width: 14px; height: 14px; color: var(--accent-cyan);"></i> Or Load an Existing Dataset
+                    </h3>
+                    <div style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <table style="width: 100%; font-size: 0.72rem; border-collapse: collapse;">
+                            <thead>
+                                <tr style="text-align: left; background: rgba(15,23,42,0.3);">
+                                    <th style="padding: 0.35rem 0.5rem; font-weight: 600; border-bottom: 1px solid var(--border-color);">Filename</th>
+                                    <th style="padding: 0.35rem 0.5rem; font-weight: 600; border-bottom: 1px solid var(--border-color);">Cases</th>
+                                    <th style="padding: 0.35rem 0.5rem; font-weight: 600; border-bottom: 1px solid var(--border-color); text-align: right;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="projects-list-body">
+                                <!-- Dynamic rows -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
+        </div>
+
+        <div class="main-content" id="main-content" style="display: none; flex: 1; flex-direction: column; min-width: 0;">
             
-            <div class="sidebar-list-container">
-                <!-- Multi-Response Variables Group -->
-                <div class="section-title">
-                    <span>Multi-Response Groups</span>
-                    <span class="badge badge-violet" id="count-groups">0</span>
-                </div>
-                <ul class="variable-list" id="multi-response-list">
-                    <!-- Dynamic -->
-                </ul>
-
-                <!-- Single Variables -->
-                <div class="section-title" style="margin-top: 1rem;">
-                    <span>Single Variables</span>
-                    <span class="badge badge-cyan" id="count-variables">0</span>
-                </div>
-                <ul class="variable-list" id="single-variables-list">
-                    <!-- Dynamic -->
-                </ul>
-            </div>
-        </div>
-
-        <div class="main-content" id="main-content" style="display: none;">
-            <!-- Select a variable placeholder -->
-            <div id="no-selection-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); gap: 0.75rem;">
-                <i data-lucide="mouse-pointer-click" style="width: 38px; height: 38px;"></i>
-                <p>Select a variable or group from the left pane to view attributes and distribution stats.</p>
-            </div>
-
-            <!-- Variable details panel -->
-            <div class="workspace-layout" id="workspace-layout" style="display: none;">
-                
-                <!-- Middle Pane Column - Frequency Stats & Chart + CrossTab -->
-                <div class="workspace-column" id="workspace-middle-pane">
+            <!-- VIEW 1: Variable View (Variables Grid Table) -->
+            <div id="view-variables" class="nav-view" style="display: flex; flex-direction: column; flex: 1; padding: 1rem; gap: 1rem; overflow-y: auto;">
+                <div class="card" style="flex: 1; display: flex; flex-direction: column; gap: 0.75rem; min-height: 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; flex-shrink: 0; flex-wrap: wrap; gap: 0.5rem;">
+                        <h2 class="card-title" style="margin: 0; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+                            <i data-lucide="database" style="color: var(--accent-cyan); width: 18px; height: 18px;"></i> 
+                            <span>Loaded Dataset Variables</span>
+                            <span id="active-filename-var" style="font-size: 0.85em; font-weight: normal; opacity: 0.8; margin-left: 0.25rem; font-family: monospace;"></span>
+                        </h2>
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <!-- Export Variable Dictionary Button -->
+                            <button class="btn btn-secondary" id="btn-export-dict-card" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Export Data Dictionary to Excel">
+                                <i data-lucide="download" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Export Dictionary
+                            </button>
+                            <div class="search-container" style="width: 250px; margin: 0;">
+                                <i data-lucide="search" style="width: 14px; height: 14px;"></i>
+                                <input type="text" id="dict-search-input" placeholder="Search variables or labels..." style="padding: 0.3rem 0.5rem 0.3rem 1.6rem; font-size: 0.75rem; background: rgba(15,23,42,0.45); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; width: 100%;">
+                            </div>
+                        </div>
+                    </div>
                     
-                    <!-- Tabs Navigation Bar -->
-                    <div class="tabs-container">
-                        <button class="tab-btn active" data-tab="frequency" id="tab-btn-frequency" onclick="switchTab('frequency')">
-                            <i data-lucide="table" style="width: 13px; height: 13px; margin-right: 0.25rem;"></i> Frequency Analysis
-                        </button>
-                        <button class="tab-btn" data-tab="crosstab" id="tab-btn-crosstab" onclick="switchTab('crosstab')">
-                            <i data-lucide="grid" style="width: 13px; height: 13px; margin-right: 0.25rem;"></i> Cross-Tabulation
-                        </button>
+                    <div class="table-container" style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <table class="spss-grid-table" style="text-align: left;">
+                            <thead style="position: sticky; top: 0; z-index: 1;">
+                                <tr style="border-bottom: 2px solid var(--border-color); background: var(--bg-base);">
+                                    <th class="row-num-header"></th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 10%;">Name</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 8%;">Type</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 6%;">Width</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 6%;">Decimals</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 22%;">Label</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 15%;">Values</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 10%;">Missing</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 6%;">Columns</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 8%;">Align</th>
+                                    <th style="padding: 0.5rem; color: var(--text-primary); width: 9%;">Measure</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dict-table-body" style="background: rgba(15, 23, 42, 0.15);">
+                                <!-- Dynamic rows filled on load -->
+                            </tbody>
+                        </table>
                     </div>
+                </div>
+            </div>
 
-                    <!-- Frequency Tab Pane -->
-                    <div class="tab-pane" id="tab-pane-frequency" style="display: flex; flex-direction: column; gap: 0.75rem; width: 100%;">
-                        <!-- Frequency/Stats Card -->
-                        <div class="card">
-                            <h2 class="card-title" id="display-var-title">
-                                <span class="card-title-left"><i data-lucide="table"></i> Frequency Distribution</span>
-                            </h2>
+            <!-- VIEW: Data View (Cases Grid Table) -->
+            <div id="view-data" class="nav-view" style="display: none; flex: 1; flex-direction: column; padding: 1rem; gap: 1rem; overflow-y: auto;">
+                <div class="card" style="flex: 1; display: flex; flex-direction: column; gap: 0.75rem; min-height: 0;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; flex-shrink: 0; flex-wrap: wrap; gap: 0.5rem;">
+                        <h2 class="card-title" style="margin: 0; display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;">
+                            <i data-lucide="table" style="color: var(--accent-cyan); width: 18px; height: 18px;"></i> 
+                            <span>Loaded Dataset Cases</span>
+                            <span id="active-filename-data" style="font-size: 0.85em; font-weight: normal; opacity: 0.8; margin-left: 0.25rem; font-family: monospace;"></span>
+                            <span id="data-record-count-badge" class="badge badge-cyan" style="font-size: 0.65rem; font-family: monospace; font-weight: normal; margin-left: 0.25rem; display: none;"></span>
+                        </h2>
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <!-- Column Jumper Dropdown -->
+                            <div class="dropdown-wrapper" style="position: relative; display: inline-block;">
+                                <button class="btn btn-secondary" id="btn-data-column-jump" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Search and scroll to any variable/column">
+                                    <i data-lucide="search" style="width: 12px; height: 12px;"></i> Find Column...
+                                </button>
+                                <div id="data-column-jump-dropdown" style="display: none; position: absolute; right: 0; top: 100%; margin-top: 5px; z-index: 1010; width: 260px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: var(--shadow-premium); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); padding: 0.5rem; flex-direction: column; gap: 0.5rem;">
+                                    <input type="text" id="data-column-jump-search" placeholder="Search variables..." style="width: 100%; padding: 0.25rem 0.5rem; font-size: 0.7rem; background: rgba(15,23,42,0.45); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; font-family: var(--font-family);">
+                                    <div id="data-column-jump-list" style="max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; padding: 0.25rem 0;">
+                                        <!-- Dynamic columns list -->
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Clear Filters Button -->
+                            <button class="btn btn-secondary" id="btn-clear-data-filters" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: none; align-items: center; gap: 0.25rem; border-color: rgba(154, 27, 21, 0.4);" title="Remove all active filters">
+                                <i data-lucide="filter-x" style="width: 12px; height: 12px; color: var(--accent-rose);"></i> Clear Filters
+                            </button>
+
+                            <!-- Export Data View Button -->
+                            <button class="btn btn-secondary" id="btn-export-data-view" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Export filtered Cases to Excel">
+                                <i data-lucide="download" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Export Data
+                            </button>
+
+                            <!-- Show Value Labels Switch -->
+                            <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.75rem; user-select: none;">
+                                <input type="checkbox" id="data-chk-value-labels" style="cursor: pointer; accent-color: var(--accent-violet);">
+                                <span style="color: var(--text-primary);">Show Value Labels</span>
+                            </label>
                             
-                            <div class="table-container">
-                                <table id="stats-table">
-                                    <thead>
-                                        <!-- Dynamic based on single vs multi -->
-                                    </thead>
-                                    <tbody>
-                                        <!-- Dynamic -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <!-- Chart Visualization Card -->
-                        <div class="card">
-                            <div class="card-title">
-                                <span class="card-title-left"><i data-lucide="bar-chart-2"></i> Distribution Chart</span>
-                                <div class="chart-header-actions">
-                                    <div class="toggle-group" id="chart-metric-toggle">
-                                        <button class="toggle-btn active" data-metric="frequency" id="toggle-freq-btn">Count</button>
-                                        <button class="toggle-btn" data-metric="percent" id="toggle-pct-btn">Percentage (%)</button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="chart-container">
-                                <canvas id="distribution-chart"></canvas>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- CrossTab Tab Pane -->
-                    <div class="tab-pane" id="tab-pane-crosstab" style="display: none; flex-direction: column; gap: 0.75rem; width: 100%;">
-                        <!-- Crosstab Configurator Card -->
-                        <div class="card">
-                            <h2 class="card-title">
-                                <span class="card-title-left"><i data-lucide="sliders-horizontal"></i> Cross-Tabulation Configurator</span>
-                            </h2>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
-                                <div class="form-group">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-                                        <label style="font-size: 0.75rem;">Row Variable(s)</label>
-                                        <div style="display: flex; gap: 0.35rem;">
-                                            <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-row-select-all">All</span>
-                                            <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-row-clear-all">None</span>
-                                        </div>
-                                    </div>
-                                    <div class="checkbox-select-list" id="crosstab-row-vars" style="max-height: 160px; height: 160px;">
-                                        <!-- Populate with checkboxes of all variables -->
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
-                                        <label style="font-size: 0.75rem;">Column Variable(s)</label>
-                                        <div style="display: flex; gap: 0.35rem;">
-                                            <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-col-select-all">All</span>
-                                            <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-col-clear-all">None</span>
-                                        </div>
-                                    </div>
-                                    <div class="checkbox-select-list" id="crosstab-col-vars" style="max-height: 160px; height: 160px;">
-                                        <!-- Populate with checkboxes of all variables -->
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 0.75rem; margin-top: 0.25rem; flex-wrap: wrap;">
-                                <div class="form-group" style="flex: 1; min-width: 160px;">
-                                    <label for="crosstab-percentage-select">Cell Value Display</label>
-                                    <select id="crosstab-percentage-select">
-                                        <option value="none">Counts Only</option>
-                                        <option value="row">Count + Row Percentage (%)</option>
-                                        <option value="column">Count + Column Percentage (%)</option>
-                                        <option value="total">Count + Total Percentage (%)</option>
-                                    </select>
-                                </div>
-                                <button class="btn btn-primary" id="btn-generate-crosstab" style="padding: 0.5rem 1rem;">
-                                    <i data-lucide="play"></i> Generate CrossTabs
+                            <!-- Pagination Controls -->
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <button class="btn btn-secondary" id="data-btn-prev" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; border-radius: 4px;">
+                                    <i data-lucide="chevron-left" style="width: 12px; height: 12px;"></i> Prev
+                                </button>
+                                <span id="data-pagination-info" style="font-size: 0.75rem; font-family: monospace; color: var(--text-secondary);">Page 1 of 1</span>
+                                <button class="btn btn-secondary" id="data-btn-next" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; border-radius: 4px;">
+                                    Next <i data-lucide="chevron-right" style="width: 12px; height: 12px;"></i>
                                 </button>
                             </div>
                         </div>
+                    </div>
+                    
+                    <div class="table-container" style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <table class="spss-grid-table" style="text-align: left;" id="spss-data-table">
+                            <thead style="position: sticky; top: 0; z-index: 1;" id="data-table-head">
+                                <!-- Filled dynamically on load -->
+                            </thead>
+                            <tbody id="data-table-body" style="background: rgba(15, 23, 42, 0.15);">
+                                <!-- Filled dynamically on load -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
 
-                        <!-- Results List -->
-                        <div id="crosstab-results" style="display: flex; flex-direction: column; gap: 0.75rem;">
-                            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; color: var(--text-muted); gap: 0.5rem; border: 1px dashed var(--border-color); border-radius: 12px; background: rgba(15,23,42,0.1);">
-                                <i data-lucide="grid" style="width: 32px; height: 32px;"></i>
-                                <p style="font-size: 0.8rem;">Select Row and Column variables above and click "Generate CrossTabs".</p>
+            <!-- VIEW 2: Frequency Analysis View -->
+            <div id="view-frequency" class="nav-view" style="display: none; flex: 1; gap: 0.75rem; padding: 1rem; min-height: 0; height: 100%; box-sizing: border-box;">
+                
+                <!-- Frequency Sub-Sidebar (Variable selector column) -->
+                <div class="sub-sidebar" style="width: 260px; background: rgba(8, 12, 24, 0.15); border: 1px solid var(--border-color); border-radius: 8px; display: flex; flex-direction: column; flex-shrink: 0; height: 100%; overflow: hidden;">
+                    <div class="sidebar-header" style="padding: 0.5rem; border-bottom: 1px solid var(--border-color); flex-shrink: 0;">
+                        <div class="search-container">
+                            <i data-lucide="search"></i>
+                            <input type="text" id="freq-search-input" placeholder="Search variables...">
+                        </div>
+                    </div>
+                    
+                    <div class="sidebar-list-container" style="flex: 1; overflow-y: auto; padding: 0.5rem;">
+                        <div class="section-title">
+                            <span>Multi-Response Groups</span>
+                            <span class="badge badge-violet" id="count-groups">0</span>
+                        </div>
+                        <ul class="variable-list" id="freq-multi-response-list" style="margin-bottom: 0.75rem; padding: 0; list-style: none;">
+                            <!-- Dynamic -->
+                        </ul>
+
+                        <div class="section-title">
+                            <span>Single Variables</span>
+                            <span class="badge badge-cyan" id="count-variables">0</span>
+                        </div>
+                        <ul class="variable-list" id="freq-single-variables-list" style="padding: 0; list-style: none;">
+                            <!-- Dynamic -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Frequency Analysis Workspace -->
+                <div id="freq-workspace" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; height: 100%; min-width: 0;">
+                    
+                    <!-- Select a variable placeholder -->
+                    <div id="freq-selection-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); gap: 0.75rem; border: 1px dashed var(--border-color); border-radius: 8px; background: rgba(15,23,42,0.1);">
+                        <i data-lucide="mouse-pointer-click" style="width: 32px; height: 32px;"></i>
+                        <p style="font-size: 0.8rem;">Select a variable or group from the list on the left to calculate and display frequency stats.</p>
+                    </div>
+
+                    <!-- Variable details panel (Frequency middle + right layout) -->
+                    <div class="workspace-layout" id="workspace-layout" style="display: none; height: 100%; min-height: 0;">
+                        <!-- Middle Pane Column - Frequency Stats & Chart -->
+                        <div class="workspace-column" id="workspace-middle-pane" style="flex: 1.2; overflow-y: auto; height: 100%; display: flex; flex-direction: column; gap: 0.75rem; min-width: 0;">
+                            
+                            <!-- Frequency Tab Pane -->
+                            <div class="tab-pane" id="tab-pane-frequency" style="display: flex; flex-direction: column; gap: 0.75rem; width: 100%;">
+                                <!-- Frequency/Stats Card -->
+                                <div class="card">
+                                    <h2 class="card-title" id="display-var-title">
+                                        <span class="card-title-left"><i data-lucide="table"></i> Frequency Distribution</span>
+                                    </h2>
+                                    <div class="table-container">
+                                        <table id="stats-table">
+                                            <thead>
+                                                <!-- Dynamic based on single vs multi -->
+                                            </thead>
+                                            <tbody>
+                                                <!-- Dynamic -->
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <!-- Chart Visualization Card -->
+                                <div class="card">
+                                    <div class="card-title">
+                                        <span class="card-title-left"><i data-lucide="bar-chart-2"></i> Distribution Chart</span>
+                                        <div class="chart-header-actions">
+                                            <div class="toggle-group" id="chart-metric-toggle">
+                                                <button class="toggle-btn active" data-metric="frequency" id="toggle-freq-btn">Count</button>
+                                                <button class="toggle-btn" data-metric="percent" id="toggle-pct-btn">Percentage (%)</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="chart-container">
+                                        <canvas id="distribution-chart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Pane Column - Metadata/Attributes -->
+                        <div class="workspace-column" id="workspace-right-pane" style="flex: 0.8; overflow-y: auto; height: 100%; display: flex; flex-direction: column; gap: 0.75rem; min-width: 0;">
+                            <!-- Metadata / Attributes Card -->
+                            <div class="card" id="attributes-card">
+                                <h2 class="card-title">
+                                    <span class="card-title-left"><i data-lucide="info"></i> Collapsible Attributes</span>
+                                </h2>
+                                <div class="metadata-grid">
+                                    <div class="meta-item">
+                                        <div class="meta-label">Variable Name</div>
+                                        <div class="meta-value" id="attr-name">-</div>
+                                    </div>
+                                    <div class="meta-item">
+                                        <div class="meta-label">Measurement Level</div>
+                                        <div class="meta-value" id="attr-level">-</div>
+                                    </div>
+                                    <div class="meta-item">
+                                        <div class="meta-label">Data Type</div>
+                                        <div class="meta-value" id="attr-type">-</div>
+                                    </div>
+                                    <div class="meta-item">
+                                        <div class="meta-label">Display Format</div>
+                                        <div class="meta-value" id="attr-format">-</div>
+                                    </div>
+                                </div>
+                                <div class="form-group" style="margin-top: 0.25rem;">
+                                    <label>Variable Label</label>
+                                    <input type="text" id="attr-label" readonly style="background: rgba(15, 23, 42, 0.2); border-color: rgba(255,255,255,0.03);">
+                                </div>
+                                <!-- Value Labels Collapsible -->
+                                <div class="collapsible-box" id="value-labels-collapsible">
+                                    <div class="collapsible-header" id="value-labels-toggle">
+                                        <span>Value Labels Map</span>
+                                        <i data-lucide="chevron-down" style="width: 14px; height: 14px;"></i>
+                                    </div>
+                                    <div class="collapsible-content" id="value-labels-content">
+                                        <div class="val-label-list" id="value-labels-list">
+                                            <!-- Dynamic -->
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="group-actions" style="display: none; border-top: 1px solid var(--border-color); padding-top: 0.5rem; margin-top: 0.25rem;">
+                                    <button class="btn btn-danger" id="btn-delete-group" style="width: 100%;">
+                                        <i data-lucide="trash-2"></i> Delete This Group
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
+            </div>
 
-                <!-- Right Pane Column - Metadata & Custom MR Builder -->
-                <div class="workspace-column" id="workspace-right-pane">
-                    <!-- Metadata / Attributes Card -->
-                    <div class="card" id="attributes-card">
-                        <h2 class="card-title">
-                            <span class="card-title-left"><i data-lucide="info"></i> Collapsible Attributes</span>
-                        </h2>
-                        
-                        <div class="metadata-grid">
-                            <div class="meta-item">
-                                <div class="meta-label">Variable Name</div>
-                                <div class="meta-value" id="attr-name">-</div>
-                            </div>
-                            <div class="meta-item">
-                                <div class="meta-label">Measurement Level</div>
-                                <div class="meta-value" id="attr-level">-</div>
-                            </div>
-                            <div class="meta-item">
-                                <div class="meta-label">Data Type</div>
-                                <div class="meta-value" id="attr-type">-</div>
-                            </div>
-                            <div class="meta-item">
-                                <div class="meta-label">Display Format</div>
-                                <div class="meta-value" id="attr-format">-</div>
-                            </div>
-                        </div>
-
-                        <div class="form-group" style="margin-top: 0.25rem;">
-                            <label>Variable Label</label>
-                            <input type="text" id="attr-label" readonly style="background: rgba(15, 23, 42, 0.2); border-color: rgba(255,255,255,0.03);">
-                        </div>
-
-                        <!-- Value Labels Collapsible -->
-                        <div class="collapsible-box" id="value-labels-collapsible">
-                            <div class="collapsible-header" id="value-labels-toggle">
-                                <span>Value Labels Map</span>
-                                <i data-lucide="chevron-down" style="width: 14px; height: 14px;"></i>
-                            </div>
-                            <div class="collapsible-content" id="value-labels-content">
-                                <div class="val-label-list" id="value-labels-list">
-                                    <!-- Dynamic -->
+            <!-- VIEW 3: Cross-Tabulation View -->
+            <div id="view-crosstabs" class="nav-view" style="display: none; flex: 1; flex-direction: column; gap: 0.75rem; padding: 1rem; overflow-y: auto; height: 100%;">
+                <!-- Crosstab Configurator Card -->
+                <div class="card">
+                    <h2 class="card-title">
+                        <span class="card-title-left"><i data-lucide="sliders-horizontal"></i> Cross-Tabulation Configurator</span>
+                    </h2>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                        <div class="form-group">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                                <label style="font-size: 0.75rem;">Row Variable(s)</label>
+                                <div style="display: flex; gap: 0.35rem;">
+                                    <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-row-select-all">All</span>
+                                    <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-row-clear-all">None</span>
                                 </div>
                             </div>
-                        </div>
-                        
-                        <div id="group-actions" style="display: none; border-top: 1px solid var(--border-color); padding-top: 0.5rem; margin-top: 0.25rem;">
-                            <button class="btn btn-danger" id="btn-delete-group" style="width: 100%;">
-                                <i data-lucide="trash-2"></i> Delete This Group
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Multi-Response Variables Configurator Card -->
-                    <div class="card">
-                        <h2 class="card-title">
-                            <span class="card-title-left"><i data-lucide="sliders"></i> Multi-Response Builder</span>
-                        </h2>
-                        <p style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.3;">
-                            Combine multiple dichotomy variables sharing patterns into a single analytical variable.
-                        </p>
-
-                        <div class="form-group">
-                            <label for="mr-name">New Group Name (e.g. Q4_MERGED)</label>
-                            <input type="text" id="mr-name" placeholder="Q1_GROUPED">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="mr-label">Group Label (Question Description)</label>
-                            <input type="text" id="mr-label" placeholder="Q1. Favorite programming languages">
-                        </div>
-
-                        <div class="form-group">
-                            <label>Select constituent variables</label>
-                            <div class="checkbox-select-list" id="mr-variables-select-list">
-                                <!-- Dynamic list of all variables in dataset -->
+                            <div class="checkbox-select-list" id="crosstab-row-vars" style="height: 140px;">
+                                <!-- Dynamic checklists -->
                             </div>
                         </div>
-
                         <div class="form-group">
-                            <label for="mr-checked-value">Checked Value (defaults to auto-detect)</label>
-                            <input type="text" id="mr-checked-value" placeholder="e.g. 1 or Yes">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.25rem;">
+                                <label style="font-size: 0.75rem;">Column Variable(s)</label>
+                                <div style="display: flex; gap: 0.35rem;">
+                                    <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-col-select-all">All</span>
+                                    <span class="toggle-btn" style="padding: 0.05rem 0.3rem; font-size: 0.65rem;" id="crosstab-col-clear-all">None</span>
+                                </div>
+                            </div>
+                            <div class="checkbox-select-list" id="crosstab-col-vars" style="height: 140px;">
+                                <!-- Dynamic checklists -->
+                            </div>
                         </div>
-
-                        <button class="btn btn-primary" id="btn-create-group" style="width: 100%; margin-top: 0.25rem;">
-                            <i data-lucide="plus-circle"></i> Convert to Single Variable
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px solid var(--border-color);">
+                        <div style="display: flex; align-items: center; gap: 0.35rem;">
+                            <label for="crosstab-percentage-select" style="font-size: 0.72rem; margin: 0;">Cell Statistics</label>
+                            <select id="crosstab-percentage-select" style="font-size: 0.72rem; padding: 0.2rem 0.4rem; background: rgba(15,23,42,0.4); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                                <option value="column">Show Column % (Recommended)</option>
+                                <option value="row">Show Row %</option>
+                                <option value="count">Show Counts Only</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="btn-generate-crosstab" style="padding: 0.4rem 1rem;">
+                            <i data-lucide="play" style="width: 13px; height: 13px; margin-right: 0.25rem;"></i> Generate CrossTabs
                         </button>
                     </div>
                 </div>
 
+                <!-- Crosstabulation Output Results Card -->
+                <div class="card" style="flex: 1; display: flex; flex-direction: column; min-height: 250px;">
+                    <h2 class="card-title" style="flex-shrink: 0; justify-content: space-between;">
+                        <span class="card-title-left"><i data-lucide="grid"></i> Analytical Output Crosstabs</span>
+                        <button class="btn btn-secondary" id="btn-copy-crosstab-clipboard" style="padding: 0.25rem 0.5rem; font-size: 0.65rem;">
+                            <i data-lucide="copy" style="width: 12px; height: 12px;"></i> Copy Table
+                        </button>
+                    </h2>
+                    
+                    <div id="crosstab-results" style="flex: 1; overflow: auto; padding: 0.5rem 0; display: flex; flex-direction: column; gap: 1.5rem; min-height: 0;">
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); gap: 0.5rem;">
+                            <i data-lucide="grid" style="width: 32px; height: 32px;"></i>
+                            <p style="font-size: 0.8rem;">Select Row and Column variables above and click "Generate CrossTabs".</p>
+                        </div>
+                    </div>
+                </div>
             </div>
+
+            <!-- VIEW 4: Multi-Response Builder View -->
+            <div id="view-mr-builder" class="nav-view" style="display: none; flex-direction: column; gap: 0.75rem; padding: 1rem; overflow-y: auto; height: 100%;">
+                <div class="card" style="max-width: 600px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <h2 class="card-title" style="border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem;">
+                        <span class="card-title-left"><i data-lucide="layers"></i> Multi-Response Group Builder</span>
+                    </h2>
+                    <p style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.3; margin: 0;">
+                        Combine multiple dichotomy variables sharing patterns (e.g. checkbox options) into a single analytical group for analysis.
+                    </p>
+
+                    <div class="form-group">
+                        <label for="mr-name">New Group Name (e.g. Q4_MERGED)</label>
+                        <input type="text" id="mr-name" placeholder="Q1_GROUPED" style="width: 100%;">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="mr-label">Group Label (Question Description)</label>
+                        <input type="text" id="mr-label" placeholder="Q1. Favorite programming languages" style="width: 100%;">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Select constituent variables</label>
+                        <div class="checkbox-select-list" id="mr-variables-select-list" style="height: 180px;">
+                            <!-- Dynamic list of all variables in dataset -->
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="mr-checked-value">Checked Value (defaults to auto-detect)</label>
+                        <input type="text" id="mr-checked-value" placeholder="e.g. 1 or Yes" style="width: 100%;">
+                    </div>
+
+                    <button class="btn btn-primary" id="btn-create-group" style="width: 100%; margin-top: 0.5rem; padding: 0.5rem;">
+                        <i data-lucide="plus-circle"></i> Create Multi-Response Group
+                    </button>
+                </div>
+            </div>
+
         </div>
 
     </main>
@@ -320,7 +463,24 @@
         </div>
     </div>
 
+    <!-- Global Excel-like Column Filter Dropdown Overlay -->
+    <div id="col-filter-dropdown" style="display: none; position: absolute; z-index: 1000; width: 220px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: var(--shadow-premium); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); padding: 0.5rem; flex-direction: column; gap: 0.5rem;">
+        <!-- Search bar -->
+        <input type="text" id="filter-dropdown-search" placeholder="Search options..." style="width: 100%; padding: 0.25rem 0.5rem; font-size: 0.7rem; background: rgba(15,23,42,0.45); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; font-family: var(--font-family);">
+        
+        <!-- Checklist scroll container -->
+        <div id="filter-dropdown-list" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.7rem; padding: 0.25rem 0;">
+            <!-- Rendered checkboxes dynamic -->
+        </div>
+        
+        <!-- Action Buttons -->
+        <div style="display: flex; justify-content: flex-end; gap: 0.4rem; border-top: 1px solid var(--border-color); padding-top: 0.5rem;">
+            <button class="btn btn-secondary" id="filter-dropdown-btn-cancel" style="padding: 0.2rem 0.5rem; font-size: 0.65rem;">Cancel</button>
+            <button class="btn btn-primary" id="filter-dropdown-btn-ok" style="padding: 0.2rem 0.5rem; font-size: 0.65rem;">OK</button>
+        </div>
+    </div>
+
     <!-- Script Entry -->
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=1.0.3"></script>
 </body>
 </html>

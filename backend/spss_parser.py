@@ -20,7 +20,6 @@ def extract_data_dictionary(df, meta):
     dictionary = []
     
     # Check measure mapping
-    # pyreadstat gives variable_measure as dict or None
     measures = getattr(meta, 'variable_measure', {}) or {}
     # type mappings
     types = getattr(meta, 'readstat_variable_types', {}) or {}
@@ -31,29 +30,145 @@ def extract_data_dictionary(df, meta):
     value_labels = getattr(meta, 'value_labels', {}) or {}
     variable_to_label = getattr(meta, 'variable_to_label', {}) or {}
     
+    # SPSS grid specific mappings
+    aligns = getattr(meta, 'variable_alignment', {}) or {}
+    display_widths = getattr(meta, 'variable_display_width', {}) or {}
+    missing_ranges = getattr(meta, 'missing_ranges', {}) or {}
+    missing_user_values = getattr(meta, 'missing_user_values', {}) or {}
+    
     for col in meta.column_names:
         label = column_names_to_labels.get(col) or variable_labels.get(col) or ""
         measure = measures.get(col) or "unknown"
-        var_type = types.get(col) or "unknown"
+        var_type_raw = types.get(col) or "unknown"
         var_format = formats.get(col) or ""
         
-        # Get value labels string representation
+        # Determine SPSS Type
+        if var_type_raw in ('double', 'float', 'integer', 'int16', 'int32', 'numeric'):
+            var_type = "Numeric"
+        elif var_type_raw in ('string', 'char', 'character'):
+            var_type = "String"
+        else:
+            if var_format and var_format.upper().startswith('A'):
+                var_type = "String"
+            else:
+                var_type = "Numeric"
+                
+        # Width & Decimals parsing
+        width = 8
+        decimals = 0
+        if var_format:
+            match = re.match(r'([A-Za-z]+)?([0-9]+)(?:\.([0-9]+))?', var_format)
+            if match:
+                w_val = match.group(2)
+                d_val = match.group(3)
+                if w_val:
+                    width = int(w_val)
+                if d_val:
+                    decimals = int(d_val)
+                    
+        # Values preview format
         val_labels_dict = value_labels.get(variable_to_label.get(col) or col)
         if not val_labels_dict and col in value_labels:
             val_labels_dict = value_labels[col]
             
+        # Clean value labels dict keys to prevent float keys (e.g. 1.0 -> 1)
+        cleaned_val_labels_dict = {}
         val_labels_str = ""
         if val_labels_dict:
-            val_labels_str = "; ".join([f"{k} = {v}" for k, v in val_labels_dict.items()])
+            parts = []
+            for k, v in val_labels_dict.items():
+                if isinstance(k, float) and k.is_integer():
+                    k_str = str(int(k))
+                    cleaned_val_labels_dict[int(k)] = v
+                else:
+                    k_str = str(k)
+                    cleaned_val_labels_dict[k] = v
+                parts.append(f"{k_str} = {v}")
+            val_labels_str = "; ".join(parts)
+            
+        values_preview = "None"
+        if cleaned_val_labels_dict:
+            try:
+                sorted_keys = sorted(cleaned_val_labels_dict.keys())
+            except Exception:
+                sorted_keys = list(cleaned_val_labels_dict.keys())
+            if sorted_keys:
+                first_key = sorted_keys[0]
+                first_val = cleaned_val_labels_dict[first_key]
+                if isinstance(first_key, float) and first_key.is_integer():
+                    first_key_str = str(int(first_key))
+                else:
+                    first_key_str = str(first_key)
+                values_preview = f"{{{first_key_str}, {first_val}}}..."
+                
+        # Missing values formatting
+        missing_list = []
+        ranges = missing_ranges.get(col, [])
+        for r in ranges:
+            lo = r.get('lo')
+            hi = r.get('hi')
+            if lo is not None and hi is not None:
+                if lo == hi:
+                    if isinstance(lo, float) and lo.is_integer():
+                        missing_list.append(str(int(lo)))
+                    else:
+                        missing_list.append(str(lo))
+                else:
+                    lo_str = str(int(lo)) if isinstance(lo, float) and lo.is_integer() else str(lo)
+                    hi_str = str(int(hi)) if isinstance(hi, float) and hi.is_integer() else str(hi)
+                    missing_list.append(f"{lo_str}-{hi_str}")
+                    
+        user_vals = missing_user_values.get(col, [])
+        if user_vals and not ranges:
+            for val in user_vals:
+                if isinstance(val, float) and val.is_integer():
+                    missing_list.append(str(int(val)))
+                else:
+                    missing_list.append(str(val))
+        missing_values = ", ".join(missing_list) if missing_list else "None"
+        
+        # Display width
+        display_columns = display_widths.get(col) or 8
+        
+        # Alignment
+        align_raw = (aligns.get(col) or "unknown").lower()
+        if align_raw == "left":
+            alignment = "Left"
+        elif align_raw == "center":
+            alignment = "Center"
+        elif align_raw == "right":
+            alignment = "Right"
+        else:
+            alignment = "Left" if var_type == "String" else "Right"
+            
+        # Measurement level
+        measure_raw = measure.lower()
+        if measure_raw == "nominal":
+            measurement = "Nominal"
+        elif measure_raw == "ordinal":
+            measurement = "Ordinal"
+        elif measure_raw == "scale":
+            measurement = "Scale"
+        else:
+            measurement = "Nominal"
             
         dictionary.append({
             "variable_name": col,
             "variable_label": label,
             "measurement_level": measure,
-            "type": var_type,
+            "type": var_type_raw,
             "format": var_format,
             "value_labels": val_labels_str,
-            "value_labels_dict": val_labels_dict or {}
+            "value_labels_dict": cleaned_val_labels_dict,
+            # New SPSS fields
+            "spss_type": var_type,
+            "width": width,
+            "decimals": decimals,
+            "values_preview": values_preview,
+            "missing_values": missing_values,
+            "display_columns": display_columns,
+            "alignment": alignment,
+            "measurement": measurement
         })
         
     return dictionary
@@ -558,4 +673,3 @@ def calculate_banner_crosstab(df, meta, row_var, col_vars):
         "valid_count": int(grand_total),
         "missing_count": int(len(df) - grand_total)
     }
-

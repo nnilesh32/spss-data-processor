@@ -12,7 +12,18 @@ const state = {
     chartInstance: null, // ChartJS instance
     chartMetric: 'frequency', // 'frequency' or 'percent'
     currentData: null, // Cache of the selected variable/group stats
-    crosstabResults: null // Cache of generated crosstab results
+    crosstabResults: null, // Cache of generated crosstab results
+    
+    // Data View Grid State
+    dataViewPage: 1,
+    dataViewPageSize: 100,
+    showValueLabels: false,
+    dataViewFilters: {}, // Maps column name to search query
+    dataViewFilteredCount: 0, // Total cases matching active filters
+    dataViewLoaded: false,
+    dataViewFilename: null,
+    dataViewColumns: [],
+    dataViewRows: []
 };
 
 // DOM Elements
@@ -22,32 +33,47 @@ const el = {
     loader: document.getElementById('loader'),
     dashboardContainer: document.getElementById('dashboard-container'),
     uploadOverlay: document.getElementById('upload-overlay'),
-    sidebar: document.getElementById('sidebar'),
+    headerNav: document.getElementById('header-nav'),
     mainContent: document.getElementById('main-content'),
-    noSelectionPlaceholder: document.getElementById('no-selection-placeholder'),
+    noSelectionPlaceholder: document.getElementById('freq-selection-placeholder'),
     workspaceLayout: document.getElementById('workspace-layout'),
+    existingProjectsContainer: document.getElementById('existing-projects-container'),
+    projectsListBody: document.getElementById('projects-list-body'),
+    
+    // Data View DOM bindings
+    dataChkValueLabels: document.getElementById('data-chk-value-labels'),
+    dataBtnPrev: document.getElementById('data-btn-prev'),
+    dataBtnNext: document.getElementById('data-btn-next'),
+    dataPaginationInfo: document.getElementById('data-pagination-info'),
+    dataTableHeader: document.getElementById('data-table-head'),
+    dataTableBody: document.getElementById('data-table-body'),
+    dataRecordCountBadge: document.getElementById('data-record-count-badge'),
+    btnClearDataFilters: document.getElementById('btn-clear-data-filters'),
+    btnExportDataView: document.getElementById('btn-export-data-view'),
+    btnDataColumnJump: document.getElementById('btn-data-column-jump'),
+    dataColumnJumpDropdown: document.getElementById('data-column-jump-dropdown'),
+    dataColumnJumpSearch: document.getElementById('data-column-jump-search'),
+    dataColumnJumpList: document.getElementById('data-column-jump-list'),
     
     // Header Actions
     headerActions: document.getElementById('header-actions'),
-    activeFilename: document.getElementById('active-filename'),
-    btnExportCsv: document.getElementById('btn-export-csv'),
-    btnExportExcel: document.getElementById('btn-export-excel'),
+    btnHome: document.getElementById('btn-home'),
+    activeFilenameVar: document.getElementById('active-filename-var'),
+    activeFilenameData: document.getElementById('active-filename-data'),
+    btnExportDictCard: document.getElementById('btn-export-dict-card'),
     btnToggleTheme: document.getElementById('btn-toggle-theme'),
     themeIcon: document.getElementById('theme-icon'),
     
     // Lists
-    searchInput: document.getElementById('search-input'),
+    searchInput: document.getElementById('freq-search-input'),
     countGroups: document.getElementById('count-groups'),
     countVariables: document.getElementById('count-variables'),
-    multiResponseList: document.getElementById('multi-response-list'),
-    singleVariablesList: document.getElementById('single-variables-list'),
+    multiResponseList: document.getElementById('freq-multi-response-list'),
+    singleVariablesList: document.getElementById('freq-single-variables-list'),
     mrVariablesSelectList: document.getElementById('mr-variables-select-list'),
     
-    // Tabs
-    tabBtnFrequency: document.getElementById('tab-btn-frequency'),
-    tabBtnCrosstab: document.getElementById('tab-btn-crosstab'),
-    tabPaneFrequency: document.getElementById('tab-pane-frequency'),
-    tabPaneCrosstab: document.getElementById('tab-pane-crosstab'),
+    // Clipboard Copy
+    btnCopyCrosstabClipboard: document.getElementById('btn-copy-crosstab-clipboard'),
     
     // Variable Detail View
     displayVarTitle: document.getElementById('display-var-title'),
@@ -102,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
         loadSavedTheme();
         setupEventListeners();
+        fetchProjectsList();
         lucide.createIcons();
     } catch (err) {
         console.error("Startup Error:", err);
@@ -167,11 +194,14 @@ function setupEventListeners() {
     // Delete custom group
     el.btnDeleteGroup.addEventListener('click', deleteSelectedMultiResponseGroup);
     
-    // Export Data Dictionary Excel
-    el.btnExportExcel.addEventListener('click', () => triggerExport('excel'));
+
+    // Export Data Dictionary Excel from Card
+    if (el.btnExportDictCard) {
+        el.btnExportDictCard.addEventListener('click', () => triggerExport('excel'));
+    }
     
-    // Export Data Dictionary CSV
-    el.btnExportCsv.addEventListener('click', () => triggerExport('csv'));
+    // Home button click
+    el.btnHome.addEventListener('click', goHome);
     
     // Modal Dismiss
     el.btnModalClose.addEventListener('click', hideModal);
@@ -183,9 +213,13 @@ function setupEventListeners() {
     el.toggleFreqBtn.addEventListener('click', () => setChartMetric('frequency'));
     el.togglePctBtn.addEventListener('click', () => setChartMetric('percent'));
 
-    // Tabs Clicking
-    el.tabBtnFrequency.addEventListener('click', () => switchTab('frequency'));
-    el.tabBtnCrosstab.addEventListener('click', () => switchTab('crosstab'));
+    // Dictionary Search Input
+    const dictSearchInput = document.getElementById('dict-search-input');
+    if (dictSearchInput) {
+        dictSearchInput.addEventListener('input', (e) => {
+            renderDataDictionaryTable(e.target.value);
+        });
+    }
 
     // Crosstab Select All/None
     el.crosstabRowSelectAll.addEventListener('click', () => toggleCheckboxes('#crosstab-row-vars', true));
@@ -200,6 +234,71 @@ function setupEventListeners() {
     el.crosstabPercentageSelect.addEventListener('change', () => {
         if (state.crosstabResults) renderCrosstabResults();
     });
+
+    // Copy Crosstab to Clipboard
+    if (el.btnCopyCrosstabClipboard) {
+        el.btnCopyCrosstabClipboard.addEventListener('click', copyCrosstabsToClipboard);
+    }
+
+    // Data View Show Value Labels Checkbox Toggle
+    if (el.dataChkValueLabels) {
+        el.dataChkValueLabels.addEventListener('change', (e) => {
+            state.showValueLabels = e.target.checked;
+            if (state.dataViewLoaded) {
+                renderDataViewTable();
+            }
+        });
+    }
+
+    // Data View Clear Filters Click
+    if (el.btnClearDataFilters) {
+        el.btnClearDataFilters.addEventListener('click', () => {
+            state.dataViewFilters = {};
+            loadDataView(1); // Reload data view on page 1
+        });
+    }
+
+    // Data View Export Click
+    if (el.btnExportDataView) {
+        el.btnExportDataView.addEventListener('click', () => {
+            if (!state.filename) return;
+            const filtersStr = JSON.stringify(state.dataViewFilters);
+            window.location.href = `/api/data/export?value_labels=${state.showValueLabels}&filters=${encodeURIComponent(filtersStr)}`;
+        });
+    }
+
+    // Column Jump Dropdown Toggle click
+    if (el.btnDataColumnJump) {
+        el.btnDataColumnJump.addEventListener('click', () => {
+            toggleColumnJumpDropdown();
+        });
+    }
+
+    // Column Jump Dropdown search input event
+    if (el.dataColumnJumpSearch) {
+        el.dataColumnJumpSearch.addEventListener('input', (e) => {
+            renderColumnJumpList(e.target.value);
+        });
+    }
+
+    // Data View Pagination Prev
+    if (el.dataBtnPrev) {
+        el.dataBtnPrev.addEventListener('click', () => {
+            if (state.dataViewPage > 1) {
+                loadDataView(state.dataViewPage - 1);
+            }
+        });
+    }
+
+    // Data View Pagination Next
+    if (el.dataBtnNext) {
+        el.dataBtnNext.addEventListener('click', () => {
+            const maxPage = Math.ceil(state.dataViewFilteredCount / state.dataViewPageSize);
+            if (state.dataViewPage < maxPage) {
+                loadDataView(state.dataViewPage + 1);
+            }
+        });
+    }
 }
 
 // Theme Management
@@ -234,33 +333,187 @@ function toggleTheme() {
 }
 
 // Tabs Navigation
-function switchTab(tabName) {
-    const rightPane = document.getElementById('workspace-right-pane');
-    if (tabName === 'frequency') {
-        el.tabBtnFrequency.classList.add('active');
-        el.tabBtnCrosstab.classList.remove('active');
-        el.tabPaneFrequency.style.display = 'flex';
-        el.tabPaneCrosstab.style.display = 'none';
-        if (el.workspaceLayout) {
-            el.workspaceLayout.style.gridTemplateColumns = '';
-        }
-        if (rightPane) {
-            rightPane.style.display = '';
-        }
-    } else {
-        el.tabBtnFrequency.classList.remove('active');
-        el.tabBtnCrosstab.classList.add('active');
-        el.tabPaneFrequency.style.display = 'none';
-        el.tabPaneCrosstab.style.display = 'flex';
-        if (el.workspaceLayout) {
-            el.workspaceLayout.style.gridTemplateColumns = '1fr';
-        }
-        if (rightPane) {
-            rightPane.style.display = 'none';
+// Navigation menu switching
+function switchNavMenu(menuId) {
+    const views = {
+        'variables': document.getElementById('view-variables'),
+        'data': document.getElementById('view-data'),
+        'frequency': document.getElementById('view-frequency'),
+        'crosstabs': document.getElementById('view-crosstabs')
+    };
+    
+    const buttons = {
+        'variables': document.getElementById('header-btn-variables'),
+        'data': document.getElementById('header-btn-data'),
+        'frequency': document.getElementById('header-btn-frequency'),
+        'crosstabs': document.getElementById('header-btn-crosstabs')
+    };
+
+    // Toggle button active class
+    for (const [key, btn] of Object.entries(buttons)) {
+        if (btn) {
+            if (key === menuId) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
         }
     }
+
+    // Toggle view visibility
+    for (const [key, view] of Object.entries(views)) {
+        if (view) {
+            if (key === menuId) {
+                view.style.display = 'flex';
+            } else {
+                view.style.display = 'none';
+            }
+        }
+    }
+    
+    // Auto-fetch data if switching to data view and it's not loaded yet
+    if (menuId === 'data' && state.filename && (!state.dataViewLoaded || state.dataViewFilename !== state.filename)) {
+        loadDataView(1);
+    }
 }
-window.switchTab = switchTab;
+window.switchNavMenu = switchNavMenu;
+
+// Copy Crosstab Table to Clipboard in TSV format
+async function copyCrosstabsToClipboard() {
+    if (!state.crosstabResults || state.crosstabResults.length === 0) {
+        showModal('Copy Error', 'No crosstab results to copy.');
+        return;
+    }
+    
+    const pctMode = el.crosstabPercentageSelect.value;
+    let tsv = "";
+    
+    state.crosstabResults.forEach((ct, ctIdx) => {
+        const colNames = ct.columns_groups.map(g => g.variable_name).join(', ');
+        tsv += `${ct.row_variable} (${ct.row_label}) * Banner (${colNames})\n\n`;
+        
+        // Row 1: Variable Name headers
+        tsv += `\tTotal\t`;
+        ct.columns_groups.forEach(group => {
+            tsv += `${group.variable_name} (${group.variable_label})`;
+            for (let i = 0; i < group.categories.length; i++) {
+                tsv += `\t`;
+            }
+        });
+        tsv += `\n`;
+        
+        // Row 2: Category labels/codes
+        tsv += `${ct.row_variable}\tTotal\t`;
+        ct.columns_groups.forEach(group => {
+            group.categories.forEach(col => {
+                const labelText = col.label && col.label.trim() !== '' ? col.label : col.code;
+                tsv += `${labelText} (${col.letter})\t`;
+            });
+        });
+        tsv += `\n`;
+        
+        // Content rows
+        ct.row_categories.forEach((rowCat, rIdx) => {
+            const rowLabelText = rowCat.label && rowCat.label.trim() !== '' ? rowCat.label : rowCat.code;
+            tsv += `${rowLabelText}\t`;
+            
+            // Total Column
+            const rCount = ct.total_column.counts[rIdx];
+            let rPctText = "";
+            if (pctMode === 'row') rPctText = " (100.0%)";
+            else if (pctMode === 'column' || pctMode === 'total') rPctText = ` (${ct.total_column.percents[rIdx]}%)`;
+            tsv += `${rCount}${rPctText}\t`;
+            
+            // Groups
+            ct.columns_groups.forEach(group => {
+                group.categories.forEach(colCat => {
+                    const count = colCat.counts[rIdx];
+                    let percentStr = "";
+                    if (pctMode === 'row') {
+                        percentStr = ` (${colCat.row_percents[rIdx]}%)`;
+                    } else if (pctMode === 'column') {
+                        percentStr = ` (${colCat.column_percents[rIdx]}%)`;
+                    } else if (pctMode === 'total') {
+                        percentStr = ` (${colCat.total_percents[rIdx]}%)`;
+                    }
+                    
+                    let sigStr = "";
+                    if (colCat.sig_markers && colCat.sig_markers[rIdx]) {
+                        sigStr = ` ${colCat.sig_markers[rIdx]}`;
+                    }
+                    
+                    tsv += `${count}${percentStr}${sigStr}\t`;
+                });
+            });
+            tsv += `\n`;
+        });
+        
+        // Total row
+        tsv += `Total\t`;
+        let totalPctTotal = "";
+        if (pctMode !== 'none') totalPctTotal = " (100.0%)";
+        tsv += `${ct.total_column.total}${totalPctTotal}\t`;
+        
+        ct.columns_groups.forEach(group => {
+            group.categories.forEach(colCat => {
+                const colTotal = colCat.total;
+                let colPctTotal = "";
+                if (pctMode === 'column') {
+                    colPctTotal = " (100.0%)";
+                } else if (pctMode === 'total') {
+                    const cTotalPct = ((colTotal / ct.grand_total) * 100.0).toFixed(2);
+                    colPctTotal = ` (${cTotalPct}%)`;
+                }
+                tsv += `${colTotal}${colPctTotal}\t`;
+            });
+        });
+        tsv += `\n\n`;
+    });
+    
+    try {
+        await navigator.clipboard.writeText(tsv);
+        showModal('Copied!', 'Crosstab table(s) copied to clipboard in TSV format (ready to paste in Excel).');
+    } catch (err) {
+        // Fallback for older browsers
+        const textarea = document.createElement('textarea');
+        textarea.value = tsv;
+        textarea.style.position = 'fixed';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            showModal('Copied!', 'Crosstab table(s) copied to clipboard in TSV format (ready to paste in Excel).');
+        } catch (e) {
+            showModal('Clipboard Error', 'Failed to copy to clipboard.');
+        }
+        document.body.removeChild(textarea);
+    }
+}
+window.copyCrosstabsToClipboard = copyCrosstabsToClipboard;
+
+// Return back to Home / Upload landing screen
+function goHome() {
+    // Show landing screen overlay, hide workspace panels
+    el.uploadOverlay.style.display = 'flex';
+    el.dropzone.style.display = 'flex';
+    el.loader.style.display = 'none';
+    el.headerActions.style.display = 'none';
+    el.headerNav.style.display = 'none';
+    el.mainContent.style.display = 'none';
+    
+    // Clear selected states
+    state.selectedVar = null;
+    state.isSelectedGroup = false;
+    state.currentData = null;
+    state.crosstabResults = null;
+    
+    // De-select list items
+    document.querySelectorAll('.variable-item').forEach(item => item.classList.remove('active'));
+    
+    // Refresh the list of saved projects from server
+    fetchProjectsList();
+}
+window.goHome = goHome;
 
 // Helper to select all or clear checkboxes
 function toggleCheckboxes(containerSelector, checked) {
@@ -350,6 +603,9 @@ async function handleFileUpload(file) {
     
     // Update UI for Loading State
     el.dropzone.style.display = 'none';
+    if (el.existingProjectsContainer) {
+        el.existingProjectsContainer.style.display = 'none';
+    }
     el.loader.style.display = 'flex';
     
     const formData = new FormData();
@@ -371,6 +627,7 @@ async function handleFileUpload(file) {
         // Update App State
         state.filename = data.filename;
         state.rowCount = data.row_count;
+        state.dataViewFilteredCount = data.row_count;
         state.variableCount = data.variable_count;
         state.variables = data.variables;
         state.multiResponseGroups = data.suggested_groups;
@@ -379,8 +636,19 @@ async function handleFileUpload(file) {
         state.currentData = null;
         state.crosstabResults = null;
         
+        // Reset Data View State
+        state.dataViewPage = 1;
+        state.dataViewLoaded = false;
+        state.dataViewFilename = null;
+        state.dataViewColumns = [];
+        state.dataViewRows = [];
+        state.showValueLabels = false;
+        state.dataViewFilters = {};
+        if (el.dataChkValueLabels) el.dataChkValueLabels.checked = false;
+        
         // Update UI Dashboard view
-        el.activeFilename.textContent = state.filename;
+        if (el.activeFilenameVar) el.activeFilenameVar.textContent = ' - ' + state.filename;
+        if (el.activeFilenameData) el.activeFilenameData.textContent = ' - ' + state.filename;
         el.countVariables.textContent = state.variables.length;
         el.countGroups.textContent = state.multiResponseGroups.length;
         
@@ -388,23 +656,133 @@ async function handleFileUpload(file) {
         renderVariableLists();
         populateMultiResponseBuilderCheckboxes();
         populateCrosstabBuilders();
+        renderDataDictionaryTable();
         
         // Switch view states
         el.uploadOverlay.style.display = 'none';
         el.headerActions.style.display = 'flex';
-        el.sidebar.style.display = 'flex';
+        el.headerNav.style.display = 'flex';
         el.mainContent.style.display = 'flex';
         el.noSelectionPlaceholder.style.display = 'flex';
         el.workspaceLayout.style.display = 'none';
-        switchTab('frequency'); // Reset tab view
+        switchNavMenu('variables'); // Reset to variables dictionary view
         
     } catch (e) {
         showModal('Processing Error', e.message);
         // Reset view
         el.dropzone.style.display = 'flex';
         el.loader.style.display = 'none';
+        fetchProjectsList(); // Refresh history list
     }
 }
+
+// Fetch list of previously uploaded projects
+async function fetchProjectsList() {
+    try {
+        const response = await fetch('/api/projects');
+        if (!response.ok) throw new Error('Failed to retrieve project history.');
+        const projects = await response.json();
+        
+        if (projects && projects.length > 0) {
+            // Render the list of projects
+            el.projectsListBody.innerHTML = projects.map(proj => {
+                const dateStr = new Date(proj.upload_time).toLocaleDateString(undefined, {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                return `
+                    <tr style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 0.45rem 0.5rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${proj.filename}">
+                            ${proj.filename}
+                            <div style="font-size: 0.6rem; color: var(--text-muted);">${dateStr}</div>
+                        </td>
+                        <td style="padding: 0.45rem 0.5rem; color: var(--text-secondary);">${proj.row_count.toLocaleString()}</td>
+                        <td style="padding: 0.45rem 0.5rem; text-align: right;">
+                            <button class="btn btn-primary" style="padding: 0.2rem 0.5rem; font-size: 0.65rem;" onclick="loadProject('${proj.id}')">
+                                <i data-lucide="play" style="width: 10px; height: 10px; margin-right: 0.15rem;"></i> Load
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+            
+            el.existingProjectsContainer.style.display = 'block';
+            lucide.createIcons();
+        } else {
+            el.existingProjectsContainer.style.display = 'none';
+        }
+    } catch (e) {
+        console.error("Error loading project history:", e);
+        el.existingProjectsContainer.style.display = 'none';
+    }
+}
+
+// Load a specific project by ID
+async function loadProject(projectId) {
+    el.loader.style.display = 'flex';
+    el.dropzone.style.display = 'none';
+    el.existingProjectsContainer.style.display = 'none';
+    
+    try {
+        const response = await fetch(`/api/project/load/${projectId}`, {
+            method: 'POST'
+        });
+        if (!response.ok) throw new Error('Failed to load project details.');
+        const data = await response.json();
+        
+        // Update application state
+        state.filename = data.filename;
+        state.rowCount = data.row_count;
+        state.dataViewFilteredCount = data.row_count;
+        state.variableCount = data.variable_count;
+        state.variables = data.variables;
+        state.multiResponseGroups = data.multi_response_groups || [];
+        state.selectedVar = null;
+        state.isSelectedGroup = false;
+        state.currentData = null;
+        state.crosstabResults = null;
+        
+        // Reset Data View State
+        state.dataViewPage = 1;
+        state.dataViewLoaded = false;
+        state.dataViewFilename = null;
+        state.dataViewColumns = [];
+        state.dataViewRows = [];
+        state.showValueLabels = false;
+        state.dataViewFilters = {};
+        if (el.dataChkValueLabels) el.dataChkValueLabels.checked = false;
+        
+        // Update UI Dashboard view
+        if (el.activeFilenameVar) el.activeFilenameVar.textContent = ' - ' + state.filename;
+        if (el.activeFilenameData) el.activeFilenameData.textContent = ' - ' + state.filename;
+        el.countVariables.textContent = state.variables.length;
+        el.countGroups.textContent = state.multiResponseGroups.length;
+        
+        // Populate Tree lists & Builder forms
+        renderVariableLists();
+        populateMultiResponseBuilderCheckboxes();
+        populateCrosstabBuilders();
+        renderDataDictionaryTable();
+        
+        // Switch view states
+        el.uploadOverlay.style.display = 'none';
+        el.headerActions.style.display = 'flex';
+        el.headerNav.style.display = 'flex';
+        el.mainContent.style.display = 'flex';
+        el.noSelectionPlaceholder.style.display = 'flex';
+        el.workspaceLayout.style.display = 'none';
+        switchNavMenu('variables'); // Reset to variables dictionary view
+        
+    } catch (e) {
+        showModal('Error Loading Project', e.message);
+        el.loader.style.display = 'none';
+        el.dropzone.style.display = 'flex';
+        fetchProjectsList(); // Refresh projects list
+    }
+}
+window.loadProject = loadProject;
 
 // Render Left Sidebar Lists
 function renderVariableLists() {
@@ -541,7 +919,7 @@ async function selectVariableOrGroup(id, isGroup) {
     el.workspaceLayout.style.display = 'grid';
     
     // Automatically reset active tab to Frequency when a variable is clicked
-    switchTab('frequency');
+    switchNavMenu('frequency');
     
     // Fetch details
     if (isGroup) {
@@ -884,7 +1262,7 @@ function renderCrosstabResults() {
             }
             
             bodyRows += `
-                <td style="text-align: center; border-right: 1px solid var(--border-color); background: rgba(139, 92, 246, 0.05); font-weight: bold; padding: 0.5rem;">
+                <td style="text-align: center; border-right: 1px solid var(--border-color); background: rgba(83, 0, 149, 0.05); font-weight: bold; padding: 0.5rem;">
                     <strong>${rCount.toLocaleString()}</strong>${rPctStr}
                 </td>
             `;
@@ -929,7 +1307,7 @@ function renderCrosstabResults() {
             totalPctTotal = `<br><span style="font-size: 0.65rem; font-weight: bold;">100.0%</span>`;
         }
         columnTotalCells += `
-            <td style="text-align: center; font-weight: 800; border-right: 1px solid var(--border-color); background: rgba(139, 92, 246, 0.1); padding: 0.5rem;">
+            <td style="text-align: center; font-weight: 800; border-right: 1px solid var(--border-color); background: rgba(83, 0, 149, 0.1); padding: 0.5rem;">
                 ${ct.total_column.total.toLocaleString()}${totalPctTotal}
             </td>
         `;
@@ -1128,8 +1506,8 @@ function getThemeColors() {
     return {
         gridColor: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.03)',
         tickColor: isLight ? '#475569' : '#94a3b8',
-        gradientStart: isLight ? 'rgba(139, 92, 246, 0.35)' : 'rgba(139, 92, 246, 0.45)',
-        gradientEnd: isLight ? 'rgba(6, 182, 212, 0.01)' : 'rgba(6, 182, 212, 0.05)'
+        gradientStart: isLight ? 'rgba(83, 0, 149, 0.35)' : 'rgba(83, 0, 149, 0.45)',
+        gradientEnd: isLight ? 'rgba(0, 181, 172, 0.01)' : 'rgba(0, 181, 172, 0.05)'
     };
 }
 
@@ -1160,11 +1538,11 @@ function renderChart(labels, data, labelText, orientation = 'vertical') {
                 label: labelText,
                 data: data,
                 backgroundColor: gradient,
-                borderColor: '#8b5cf6',
+                borderColor: '#530095',
                 borderWidth: 1.25,
                 borderRadius: 5,
-                hoverBackgroundColor: 'rgba(139, 92, 246, 0.75)',
-                hoverBorderColor: '#06b6d4',
+                hoverBackgroundColor: 'rgba(83, 0, 149, 0.75)',
+                hoverBorderColor: '#00b5ac',
             }]
         },
         options: {
@@ -1342,4 +1720,589 @@ function triggerExport(format) {
     
     // Redirect to export API endpoint
     window.location.href = `/api/dictionary/export?format=${format}`;
+}
+
+// ==========================================
+// DATA DICTIONARY GRID VIEW
+// ==========================================
+
+// SVGs for SPSS Variable View Measurements
+const nominalSvg = `
+<svg class="measure-icon nominal" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="9" cy="15" r="5" fill="#f43f5e" fill-opacity="0.8" stroke="#fff" stroke-width="0.5"/>
+  <circle cx="15" cy="15" r="5" fill="#10b981" fill-opacity="0.8" stroke="#fff" stroke-width="0.5"/>
+  <circle cx="12" cy="9" r="5" fill="#00b5ac" fill-opacity="0.8" stroke="#fff" stroke-width="0.5"/>
+</svg>`;
+
+const ordinalSvg = `
+<svg class="measure-icon ordinal" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="5" y="14" width="4" height="6" rx="1" fill="#00b5ac" stroke="#fff" stroke-width="0.5"/>
+  <rect x="10" y="9" width="4" height="11" rx="1" fill="#f59e0b" stroke="#fff" stroke-width="0.5"/>
+  <rect x="15" y="4" width="4" height="16" rx="1" fill="#9a1b15" stroke="#fff" stroke-width="0.5"/>
+</svg>`;
+
+const scaleSvg = `
+<svg class="measure-icon scale" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M4 18L18 4" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
+  <path d="M7 15L9 17M10 12L12 14M13 9L15 11M16 6L18 8" stroke="#fff" stroke-width="1.2"/>
+</svg>`;
+
+// SVGs for Alignment
+const alignLeftSvg = `
+<svg class="align-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+  <line x1="3" y1="6" x2="21" y2="6"></line>
+  <line x1="3" y1="12" x2="15" y2="12"></line>
+  <line x1="3" y1="18" x2="18" y2="18"></line>
+</svg>`;
+
+const alignRightSvg = `
+<svg class="align-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+  <line x1="3" y1="6" x2="21" y2="6"></line>
+  <line x1="9" y1="12" x2="21" y2="12"></line>
+  <line x1="6" y1="18" x2="21" y2="18"></line>
+</svg>`;
+
+const alignCenterSvg = `
+<svg class="align-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+  <line x1="3" y1="6" x2="21" y2="6"></line>
+  <line x1="6" y1="12" x2="18" y2="12"></line>
+  <line x1="5" y1="18" x2="19" y2="18"></line>
+</svg>`;
+
+function getMeasureBadge(measure) {
+    const level = (measure || 'nominal').toLowerCase();
+    let svg = '';
+    let label = 'Nominal';
+    
+    if (level === 'nominal') {
+        svg = nominalSvg;
+        label = 'Nominal';
+    } else if (level === 'ordinal') {
+        svg = ordinalSvg;
+        label = 'Ordinal';
+    } else if (level === 'scale') {
+        svg = scaleSvg;
+        label = 'Scale';
+    } else {
+        svg = nominalSvg;
+        label = 'Nominal';
+    }
+    
+    return `
+        <div class="measure-badge-container" title="${label}">
+            ${svg}
+            <span class="measure-badge-text" style="font-size: 0.68rem; margin-left: 0.15rem;">${label}</span>
+        </div>
+    `;
+}
+
+function getAlignBadge(align) {
+    const val = (align || 'right').toLowerCase();
+    let svg = '';
+    let label = 'Right';
+    if (val === 'left') {
+        svg = alignLeftSvg;
+        label = 'Left';
+    } else if (val === 'center') {
+        svg = alignCenterSvg;
+        label = 'Center';
+    } else {
+        svg = alignRightSvg;
+        label = 'Right';
+    }
+    return `
+        <div class="align-badge-container" title="${label}">
+            ${svg}
+            <span style="font-size: 0.68rem; margin-left: 0.15rem;">${label}</span>
+        </div>
+    `;
+}
+
+function renderDataDictionaryTable(filterText = '') {
+    const tableBody = document.getElementById('dict-table-body');
+    if (!tableBody) return;
+    
+    const query = filterText.trim().toLowerCase();
+    const filteredVars = state.variables.filter(v => {
+        const nameMatch = v.variable_name.toLowerCase().includes(query);
+        const labelMatch = v.variable_label.toLowerCase().includes(query);
+        const formatMatch = (v.spss_type || v.type || '').toLowerCase().includes(query);
+        const measureMatch = (v.measurement || v.measurement_level || '').toLowerCase().includes(query);
+        const valueLabelsMatch = v.value_labels && v.value_labels.toLowerCase().includes(query);
+        return nameMatch || labelMatch || formatMatch || measureMatch || valueLabelsMatch;
+    });
+    
+    tableBody.innerHTML = filteredVars.map((v, index) => {
+        const spssType = v.spss_type || (v.type === 'string' || v.type === 'character' ? 'String' : 'Numeric');
+        const spssWidth = typeof v.width !== 'undefined' ? v.width : 8;
+        const spssDecimals = typeof v.decimals !== 'undefined' ? v.decimals : 0;
+        const spssValues = v.values_preview || (v.value_labels ? v.value_labels : 'None');
+        const spssMissing = v.missing_values || 'None';
+        const spssColumns = v.display_columns || 8;
+        const spssAlign = v.alignment || (spssType === 'String' ? 'Left' : 'Right');
+        const spssMeasure = v.measurement || (v.measurement_level || 'Nominal');
+
+        const tooltipText = v.value_labels ? v.value_labels.split('; ').join('\n') : 'None';
+        const spssValuesDisp = spssValues === 'None' ? '<span style="opacity: 0.5; font-style: normal;">None</span>' : spssValues;
+
+        return `
+            <tr>
+                <td class="row-num-cell">${index + 1}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-primary);">${v.variable_name}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-secondary);">${spssType}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-secondary); text-align: right;">${spssWidth}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-secondary); text-align: right;">${spssDecimals}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-primary); max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${v.variable_label || ''}">${v.variable_label || '<span style="opacity: 0.5; font-size: 0.65rem; font-style: normal;">No Label</span>'}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-muted); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${tooltipText}">${spssValuesDisp}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-muted);">${spssMissing}</td>
+                <td style="padding: 0.45rem 0.5rem; color: var(--text-secondary); text-align: right;">${spssColumns}</td>
+                <td style="padding: 0.45rem 0.5rem;">${getAlignBadge(spssAlign)}</td>
+                <td style="padding: 0.45rem 0.5rem;">${getMeasureBadge(spssMeasure)}</td>
+            </tr>
+        `;
+    }).join('');
+    
+    if (filteredVars.length === 0) {
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="11" style="padding: 1.5rem; text-align: center; color: var(--text-muted);">
+                    No matching variables found.
+                </td>
+            </tr>
+        `;
+    }
+}
+
+// ==========================================
+// DATA VIEW GRID VIEW
+// ==========================================
+
+function getValueLabel(varName, value) {
+    if (value === null || value === undefined || value === "") return "";
+    const variable = state.variables.find(v => v.variable_name === varName);
+    if (!variable || !variable.value_labels_dict) return value;
+    
+    const dict = variable.value_labels_dict;
+    
+    // Parse value to float for comparisons
+    const valNum = parseFloat(value);
+    const hasNum = !isNaN(valNum);
+    
+    // Loop over the keys to find equivalent values
+    for (const key of Object.keys(dict)) {
+        // Direct string match
+        if (key === String(value)) {
+            return dict[key];
+        }
+        
+        // Float conversion match to handle keys like "1.0" matching value 1
+        const keyNum = parseFloat(key);
+        if (!isNaN(keyNum) && hasNum) {
+            if (Math.abs(keyNum - valNum) < 1e-9) {
+                return dict[key];
+            }
+        }
+    }
+    
+    return value;
+}
+
+async function loadDataView(page = 1) {
+    if (!state.filename) return;
+    
+    el.loader.style.display = 'flex';
+    try {
+        const filtersStr = JSON.stringify(state.dataViewFilters);
+        const response = await fetch(`/api/data/view?page=${page}&page_size=${state.dataViewPageSize}&filters=${encodeURIComponent(filtersStr)}`);
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to fetch dataset records');
+        }
+        
+        const res = await response.json();
+        
+        state.dataViewPage = res.page;
+        state.dataViewColumns = res.columns;
+        state.dataViewRows = res.data;
+        state.dataViewFilteredCount = res.total_cases;
+        state.dataViewLoaded = true;
+        state.dataViewFilename = state.filename;
+        
+        renderDataViewTable();
+        
+    } catch (e) {
+        showModal('Error Loading Data View', e.message);
+    } finally {
+        el.loader.style.display = 'none';
+    }
+}
+
+function renderDataViewTable() {
+    if (!el.dataTableHeader || !el.dataTableBody) return;
+    
+    // Render columns header with funnel buttons
+    let headerHtml = `<tr style="border-bottom: 2px solid var(--border-color); background: var(--bg-base);">`;
+    headerHtml += `<th class="row-num-header"></th>`; // Leftmost row index header cell
+    
+    state.dataViewColumns.forEach(col => {
+        const isFiltered = state.dataViewFilters[col] && state.dataViewFilters[col].length > 0;
+        const btnStyle = isFiltered ? 'color: var(--accent-cyan); font-weight: bold;' : 'color: var(--text-muted); opacity: 0.7;';
+        headerHtml += `
+            <th data-col-header="${col}" style="padding: 0.45rem 0.5rem; color: var(--text-primary); min-width: 110px; vertical-align: middle; user-select: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.35rem; font-weight: normal;">
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${col}">${col}</span>
+                    <button class="col-filter-trigger-btn" data-col="${col}" style="background: transparent; border: none; outline: none; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0.15rem; border-radius: 3px; ${btnStyle}" title="Filter ${col}">
+                        <svg class="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 11px; height: 11px;">
+                            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                        </svg>
+                    </button>
+                </div>
+            </th>
+        `;
+    });
+    headerHtml += `</tr>`;
+    el.dataTableHeader.innerHTML = headerHtml;
+    
+    // Render rows
+    if (state.dataViewRows.length === 0) {
+        const colCount = state.dataViewColumns.length + 1;
+        el.dataTableBody.innerHTML = `
+            <tr>
+                <td colspan="${colCount}" style="padding: 1.5rem; text-align: center; color: var(--text-muted);">
+                    No cases found.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    const startNum = (state.dataViewPage - 1) * state.dataViewPageSize;
+    
+    let rowsHtml = '';
+    state.dataViewRows.forEach((row, index) => {
+        rowsHtml += `<tr>`;
+        rowsHtml += `<td class="row-num-cell">${startNum + index + 1}</td>`;
+        
+        state.dataViewColumns.forEach(col => {
+            const val = row[col];
+            // Format value
+            let displayVal = val;
+            if (state.showValueLabels) {
+                displayVal = getValueLabel(col, val);
+            }
+            
+            // Output full string to let CSS handle truncation, always show full value as tooltip
+            const dispStr = String(displayVal);
+            const cellTitle = dispStr;
+            
+            // Format aligning to match type
+            const variable = state.variables.find(v => v.variable_name === col);
+            const spssType = variable ? variable.spss_type : 'Numeric';
+            const alignStyle = spssType === 'String' ? 'text-align: left;' : 'text-align: right;';
+            
+            rowsHtml += `<td style="color: var(--text-secondary); ${alignStyle}" title="${cellTitle}">${dispStr}</td>`;
+        });
+        
+        rowsHtml += `</tr>`;
+    });
+    
+    el.dataTableBody.innerHTML = rowsHtml;
+    
+    // Update pagination labels
+    const maxPage = Math.ceil(state.dataViewFilteredCount / state.dataViewPageSize) || 1;
+    el.dataPaginationInfo.textContent = `Page ${state.dataViewPage} of ${maxPage}`;
+    
+    // Toggle state of prev/next buttons
+    el.dataBtnPrev.disabled = state.dataViewPage <= 1;
+    el.dataBtnNext.disabled = state.dataViewPage >= maxPage;
+
+    // Toggle state of Clear Filters button
+    if (el.btnClearDataFilters) {
+        const hasFilters = Object.keys(state.dataViewFilters).length > 0;
+        el.btnClearDataFilters.style.display = hasFilters ? 'inline-flex' : 'none';
+    }
+
+    // Update the badge text and visibility
+    if (el.dataRecordCountBadge) {
+        el.dataRecordCountBadge.style.display = 'inline-block';
+        if (state.dataViewFilteredCount === state.rowCount) {
+            el.dataRecordCountBadge.textContent = `Total: ${state.rowCount.toLocaleString()}`;
+        } else {
+            el.dataRecordCountBadge.textContent = `Filtered: ${state.dataViewFilteredCount.toLocaleString()} of ${state.rowCount.toLocaleString()}`;
+        }
+    }
+}
+
+let activeFilterColumn = null;
+
+// Show column filter dropdown near the trigger button
+async function openColumnFilterDropdown(colName, triggerElement) {
+    const dropdown = document.getElementById('col-filter-dropdown');
+    if (!dropdown) return;
+    
+    activeFilterColumn = colName;
+    
+    // Position dropdown near the button
+    const rect = triggerElement.getBoundingClientRect();
+    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    
+    dropdown.style.left = `${rect.left + scrollLeft}px`;
+    dropdown.style.top = `${rect.bottom + scrollTop + 4}px`;
+    dropdown.style.display = 'flex';
+    
+    // Clear search and option list
+    const searchInput = document.getElementById('filter-dropdown-search');
+    searchInput.value = '';
+    
+    const listContainer = document.getElementById('filter-dropdown-list');
+    listContainer.innerHTML = `<div style="padding: 0.5rem; text-align: center; color: var(--text-muted); font-size: 0.65rem;">Loading unique values...</div>`;
+    
+    try {
+        const response = await fetch(`/api/data/column-values?column=${encodeURIComponent(colName)}`);
+        if (!response.ok) throw new Error('Failed to fetch column values');
+        const res = await response.json();
+        
+        const uniqueValues = res.values;
+        const currentFilters = state.dataViewFilters[colName] || [];
+        const isFiltered = currentFilters.length > 0;
+        
+        let listHtml = '';
+        
+        // "Select All" checkbox
+        const selectAllChecked = !isFiltered || currentFilters.length === uniqueValues.length;
+        listHtml += `
+            <label class="filter-dropdown-item select-all-item" style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer; padding: 0.15rem 0.25rem; user-select: none; border-bottom: 1px solid var(--border-color); margin-bottom: 0.25rem; padding-bottom: 0.25rem;">
+                <input type="checkbox" id="filter-opt-select-all" ${selectAllChecked ? 'checked' : ''} style="cursor: pointer; accent-color: var(--accent-violet);">
+                <span style="font-size: 0.68rem; color: var(--text-primary); font-family: monospace;">(Select All)</span>
+            </label>
+        `;
+        
+        // Loop values
+        uniqueValues.forEach(item => {
+            const isChecked = !isFiltered || currentFilters.some(f => String(f) === String(item.value));
+            const displayLabel = item.label !== String(item.value) ? `${item.label} (${item.value})` : item.label;
+            
+            listHtml += `
+                <label class="filter-dropdown-item" style="display: flex; align-items: center; gap: 0.35rem; cursor: pointer; padding: 0.15rem 0.25rem; user-select: none;">
+                    <input type="checkbox" class="filter-opt-chk" value="${item.value}" ${isChecked ? 'checked' : ''} style="cursor: pointer; accent-color: var(--accent-violet);">
+                    <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: monospace; font-size: 0.68rem; color: var(--text-secondary);" title="${displayLabel}">${displayLabel}</span>
+                </label>
+            `;
+        });
+        
+        listContainer.innerHTML = listHtml;
+        setupCheckboxHandlers();
+        
+        // Focus search input
+        searchInput.focus();
+        
+    } catch (e) {
+        listContainer.innerHTML = `<div style="padding: 0.5rem; text-align: center; color: var(--accent-rose); font-size: 0.65rem;">Error: ${e.message}</div>`;
+    }
+}
+
+function setupCheckboxHandlers() {
+    const selectAllChk = document.getElementById('filter-opt-select-all');
+    const chks = document.querySelectorAll('.filter-opt-chk');
+    
+    if (selectAllChk) {
+        selectAllChk.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            chks.forEach(chk => {
+                const parentRow = chk.closest('.filter-dropdown-item');
+                // Only change visible option checkboxes inside search filter matching options
+                if (parentRow && parentRow.style.display !== 'none') {
+                    chk.checked = isChecked;
+                }
+            });
+        });
+        
+        chks.forEach(chk => {
+            chk.addEventListener('change', () => {
+                const allChecked = Array.from(chks).every(c => c.checked);
+                selectAllChk.checked = allChecked;
+            });
+        });
+    }
+}
+
+// Bind dropdown triggers on table header using event delegation
+if (el.dataTableHeader && !el.dataTableHeader.dataset.listenerBound) {
+    el.dataTableHeader.dataset.listenerBound = 'true';
+    el.dataTableHeader.addEventListener('click', (e) => {
+        const btn = e.target.closest('.col-filter-trigger-btn');
+        if (btn) {
+            const colName = btn.getAttribute('data-col');
+            openColumnFilterDropdown(colName, btn);
+        }
+    });
+}
+
+// Set up global static filter dropdown event bindings
+document.addEventListener('DOMContentLoaded', () => {
+    // Dropdown search input text filtering
+    const searchInput = document.getElementById('filter-dropdown-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            const items = document.querySelectorAll('.filter-dropdown-item');
+            items.forEach(item => {
+                if (item.classList.contains('select-all-item')) return;
+                const text = item.textContent.toLowerCase();
+                if (text.includes(query)) {
+                    item.style.display = 'flex';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        });
+    }
+    
+    // Dropdown cancel button
+    const btnCancel = document.getElementById('filter-dropdown-btn-cancel');
+    if (btnCancel) {
+        btnCancel.addEventListener('click', () => {
+            const dropdown = document.getElementById('col-filter-dropdown');
+            if (dropdown) dropdown.style.display = 'none';
+        });
+    }
+    
+    // Dropdown OK/Apply button
+    const btnOk = document.getElementById('filter-dropdown-btn-ok');
+    if (btnOk) {
+        btnOk.addEventListener('click', () => {
+            const dropdown = document.getElementById('col-filter-dropdown');
+            if (!dropdown || !activeFilterColumn) return;
+            
+            const chks = document.querySelectorAll('.filter-opt-chk');
+            const selectAllChk = document.getElementById('filter-opt-select-all');
+            
+            // If select all checkbox is checked, no filter is applied (default state)
+            const allChecked = selectAllChk ? selectAllChk.checked : Array.from(chks).every(c => c.checked);
+            
+            if (allChecked) {
+                delete state.dataViewFilters[activeFilterColumn];
+            } else {
+                const checkedValues = Array.from(chks)
+                    .filter(c => c.checked)
+                    .map(c => c.value);
+                state.dataViewFilters[activeFilterColumn] = checkedValues;
+            }
+            
+            dropdown.style.display = 'none';
+            loadDataView(1); // Reload data view on page 1
+        });
+    }
+    
+    // Outside click to dismiss overlay dropdown
+    document.addEventListener('click', (e) => {
+        const dropdown = document.getElementById('col-filter-dropdown');
+        if (dropdown && dropdown.style.display !== 'none') {
+            const isClickInside = dropdown.contains(e.target);
+            const isClickTrigger = e.target.closest('.col-filter-trigger-btn');
+            if (!isClickInside && !isClickTrigger) {
+                dropdown.style.display = 'none';
+            }
+        }
+
+        const jumpDropdown = document.getElementById('data-column-jump-dropdown');
+        if (jumpDropdown && jumpDropdown.style.display !== 'none') {
+            const isClickInside = jumpDropdown.contains(e.target);
+            const isClickTrigger = e.target.closest('#btn-data-column-jump') || e.target.closest('.column-jump-item');
+            if (!isClickInside && !isClickTrigger) {
+                jumpDropdown.style.display = 'none';
+            }
+        }
+    });
+});
+
+// Toggle/Open column jumper dropdown
+function toggleColumnJumpDropdown() {
+    if (!el.dataColumnJumpDropdown) return;
+    
+    const isShowing = el.dataColumnJumpDropdown.style.display === 'flex';
+    if (isShowing) {
+        el.dataColumnJumpDropdown.style.display = 'none';
+    } else {
+        el.dataColumnJumpDropdown.style.display = 'flex';
+        el.dataColumnJumpSearch.value = '';
+        renderColumnJumpList();
+        el.dataColumnJumpSearch.focus();
+    }
+}
+
+// Render searchable column list
+function renderColumnJumpList(query = '') {
+    if (!el.dataColumnJumpList) return;
+    
+    const q = query.trim().toLowerCase();
+    
+    let html = '';
+    state.dataViewColumns.forEach(col => {
+        const variable = state.variables.find(v => v.variable_name === col);
+        const label = variable ? variable.variable_label : '';
+        
+        if (q && !col.toLowerCase().includes(q) && !label.toLowerCase().includes(q)) {
+            return; // Filtered out by search query
+        }
+        
+        const isFiltered = state.dataViewFilters[col] && state.dataViewFilters[col].length > 0;
+        const filterIcon = isFiltered 
+            ? `<svg class="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width: 11px; height: 11px; color: var(--accent-cyan); flex-shrink: 0; margin-left: 0.25rem;"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>`
+            : '';
+            
+        html += `
+            <div class="column-jump-item" data-col-name="${col}" style="display: flex; align-items: center; justify-content: space-between;">
+                <div style="display: flex; flex-direction: column; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;">
+                    <span style="font-family: monospace; font-size: 0.72rem; font-weight: bold; color: var(--accent-cyan);">${col}</span>
+                    <span style="font-size: 0.65rem; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; overflow: hidden;" title="${label || ''}">${label || '<span style="opacity:0.5; font-style:normal;">No Label</span>'}</span>
+                </div>
+                ${filterIcon}
+            </div>
+        `;
+    });
+    
+    if (!html) {
+        html = `<div style="padding: 0.5rem; text-align: center; color: var(--text-muted); font-size: 0.68rem;">No matching variables</div>`;
+    }
+    
+    el.dataColumnJumpList.innerHTML = html;
+    
+    // Bind click events on items
+    el.dataColumnJumpList.querySelectorAll('.column-jump-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const colName = item.getAttribute('data-col-name');
+            el.dataColumnJumpDropdown.style.display = 'none';
+            jumpToColumn(colName);
+        });
+    });
+}
+
+// Scroll to, highlight and open filter dropdown for a column
+function jumpToColumn(colName) {
+    if (!el.dataTableHeader) return;
+    
+    const th = el.dataTableHeader.querySelector(`[data-col-header="${colName}"]`);
+    if (!th) return;
+    
+    // 1. Scroll header element into view smoothly
+    th.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    
+    // 2. Flash-highlight animation
+    th.classList.remove('column-highlight');
+    void th.offsetWidth; // Force layout recalculation to reset animation
+    th.classList.add('column-highlight');
+    setTimeout(() => {
+        th.classList.remove('column-highlight');
+    }, 2000);
+    
+    // 3. Automatically open filter dialog
+    const triggerBtn = th.querySelector('.col-filter-trigger-btn');
+    if (triggerBtn) {
+        // A short delay to allow the scroll to complete before positioning dropdown overlay
+        setTimeout(() => {
+            openColumnFilterDropdown(colName, triggerBtn);
+        }, 300);
+    }
 }

@@ -29,3 +29,10 @@ Thumbs.db
 *.njsproj
 *.sln
 *.swp
+
+# Database & Uploaded data directory
+data/
+
+# Environment files
+.env
+.env.*
