@@ -23,7 +23,11 @@ const state = {
     dataViewLoaded: false,
     dataViewFilename: null,
     dataViewColumns: [],
-    dataViewRows: []
+    dataViewRows: [],
+
+    // Frequencies State
+    frequenciesLoaded: false,
+    frequenciesFilename: null
 };
 
 // DOM Elements
@@ -36,7 +40,8 @@ const el = {
     headerNav: document.getElementById('header-nav'),
     mainContent: document.getElementById('main-content'),
     noSelectionPlaceholder: document.getElementById('freq-selection-placeholder'),
-    workspaceLayout: document.getElementById('workspace-layout'),
+    workspaceLayout: document.getElementById('freq-workspace'),
+    freqTablesContainer: document.getElementById('freq-tables-container'),
     existingProjectsContainer: document.getElementById('existing-projects-container'),
     projectsListBody: document.getElementById('projects-list-body'),
     
@@ -170,34 +175,45 @@ function setupEventListeners() {
             handleFileUpload(files[0]);
         }
     });
-    
     // Variable Search
     el.searchInput.addEventListener('input', (e) => {
         filterVariableLists(e.target.value);
     });
-    
-    // Collapsible Toggle for Value Labels
-    el.valLabelsToggle.addEventListener('click', () => {
-        el.valLabelsContent.classList.toggle('open');
-        const icon = el.valLabelsToggle.querySelector('i');
-        if (el.valLabelsContent.classList.contains('open')) {
-            icon.setAttribute('data-lucide', 'chevron-up');
-        } else {
-            icon.setAttribute('data-lucide', 'chevron-down');
-        }
-        lucide.createIcons();
-    });
+
+    if (el.valLabelsToggle) {
+        el.valLabelsToggle.addEventListener('click', () => {
+            el.valLabelsContent.classList.toggle('open');
+            const icon = el.valLabelsToggle.querySelector('i');
+            if (el.valLabelsContent.classList.contains('open')) {
+                icon.setAttribute('data-lucide', 'chevron-up');
+            } else {
+                icon.setAttribute('data-lucide', 'chevron-down');
+            }
+            lucide.createIcons();
+        });
+    }
     
     // Custom Multi-Response Group Creation
-    el.btnCreateGroup.addEventListener('click', createCustomMultiResponseGroup);
+    if (el.btnCreateGroup) {
+        el.btnCreateGroup.addEventListener('click', createCustomMultiResponseGroup);
+    }
     
     // Delete custom group
-    el.btnDeleteGroup.addEventListener('click', deleteSelectedMultiResponseGroup);
-    
+    if (el.btnDeleteGroup) {
+        el.btnDeleteGroup.addEventListener('click', deleteSelectedMultiResponseGroup);
+    }
 
     // Export Data Dictionary Excel from Card
     if (el.btnExportDictCard) {
         el.btnExportDictCard.addEventListener('click', () => triggerExport('excel'));
+    }
+    
+    // Export SAV File from Variable View Card
+    const btnExportSavVar = document.getElementById('btn-export-sav-var');
+    if (btnExportSavVar) {
+        btnExportSavVar.addEventListener('click', () => {
+            window.location.href = '/api/data/download-sav';
+        });
     }
     
     // Home button click
@@ -206,12 +222,160 @@ function setupEventListeners() {
     // Modal Dismiss
     el.btnModalClose.addEventListener('click', hideModal);
 
-    // Theme Switcher Button
-    el.btnToggleTheme.addEventListener('click', toggleTheme);
+    // Delete Variables click & preset/drag-drop listeners
+    const btnDeleteVars = document.getElementById('btn-delete-vars-card');
+    if (btnDeleteVars) {
+        btnDeleteVars.addEventListener('click', openDeleteVarsModal);
+    }
+    
+    const presetSelect = document.getElementById('delete-vars-preset-select');
+    if (presetSelect) {
+        presetSelect.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (val) {
+                try {
+                    const vars = JSON.parse(val);
+                    const activeVarNamesMap = {};
+                    state.variables.forEach(v => {
+                        activeVarNamesMap[v.variable_name.toLowerCase()] = v.variable_name;
+                    });
+                    
+                    const matched = vars
+                        .filter(name => activeVarNamesMap[name.toLowerCase()] !== undefined)
+                        .map(name => activeVarNamesMap[name.toLowerCase()]);
+                    
+                    if (matched.length === 0) {
+                        showDeleteVarsError('The variables in this preset have already been deleted from the dataset.');
+                        e.target.value = '';
+                        // Uncheck everything
+                        const cbs = document.querySelectorAll('.delete-var-cb');
+                        cbs.forEach(cb => cb.checked = false);
+                        updateDeleteVarsCountSelected();
+                        return;
+                    }
+                    
+                    clearDeleteVarsError();
+                    
+                    const cbs = document.querySelectorAll('.delete-var-cb');
+                    cbs.forEach(cb => {
+                        cb.checked = matched.includes(cb.value);
+                    });
+                    updateDeleteVarsCountSelected();
+                    
+                    if (matched.length < vars.length) {
+                        const missingCount = vars.length - matched.length;
+                        showDeleteVarsError(`Selected ${matched.length} variables. Note: ${missingCount} variables in preset were already deleted.`);
+                    }
+                } catch (err) {
+                    console.error('Error parsing preset variables:', err);
+                }
+            } else {
+                clearDeleteVarsError();
+            }
+        });
+    }
+
+    const checklistSearch = document.getElementById('delete-vars-search-input');
+    if (checklistSearch) {
+        checklistSearch.addEventListener('input', (e) => {
+            const query = e.target.value.trim().toLowerCase();
+            const selectMatchingBtn = document.getElementById('btn-delete-vars-select-matching');
+            
+            if (selectMatchingBtn) {
+                selectMatchingBtn.style.display = query ? 'inline-block' : 'none';
+            }
+            
+            const container = document.getElementById('delete-vars-checklist-container');
+            if (container) {
+                const labels = container.querySelectorAll('label');
+                labels.forEach(label => {
+                    const text = label.textContent.toLowerCase();
+                    const isMatch = text.includes(query);
+                    label.style.display = isMatch ? 'flex' : 'none';
+                });
+            }
+        });
+    }
+
+    const dropzone = document.getElementById('delete-vars-dropzone');
+    const fileInput = document.getElementById('delete-vars-file-input');
+    const fileStatus = document.getElementById('delete-vars-file-status');
+    const fileNameText = document.getElementById('delete-vars-file-name-text');
+    
+    if (dropzone && fileInput) {
+        dropzone.addEventListener('click', () => fileInput.click());
+        
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.add('dragover');
+        });
+        
+        dropzone.addEventListener('dragleave', () => {
+            dropzone.classList.remove('dragover');
+        });
+        
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleDeleteVarsFile(e.dataTransfer.files[0]);
+            }
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                handleDeleteVarsFile(e.target.files[0]);
+            }
+        });
+    }
+
+    function handleDeleteVarsFile(file) {
+        if (file.type !== 'text/plain' && !file.name.endsWith('.txt')) {
+            showDeleteVarsError('Please upload a plain text (.txt) file.');
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target.result;
+            const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+            
+            const activeVarNamesMap = {};
+            state.variables.forEach(v => {
+                activeVarNamesMap[v.variable_name.toLowerCase()] = v.variable_name;
+            });
+            
+            const matchedVars = lines
+                .filter(name => activeVarNamesMap[name.toLowerCase()] !== undefined)
+                .map(name => activeVarNamesMap[name.toLowerCase()]);
+                
+            const missingVars = lines.filter(name => activeVarNamesMap[name.toLowerCase()] === undefined);
+            
+            if (matchedVars.length === 0) {
+                showDeleteVarsError('The variables in the uploaded file have already been deleted or do not exist in the current dataset.');
+                deleteVarsUploadedList = [];
+                if (fileInput) fileInput.value = '';
+                if (fileStatus) fileStatus.style.display = 'none';
+                return;
+            }
+            
+            clearDeleteVarsError();
+            deleteVarsUploadedList = matchedVars;
+            
+            if (fileNameText) {
+                fileNameText.textContent = `${file.name} (${matchedVars.length} matched, ${missingVars.length} not found)`;
+            }
+            if (fileStatus) {
+                fileStatus.style.display = 'flex';
+            }
+        };
+        reader.readAsText(file);
+    }
+
 
     // Chart Metric Toggles
-    el.toggleFreqBtn.addEventListener('click', () => setChartMetric('frequency'));
-    el.togglePctBtn.addEventListener('click', () => setChartMetric('percent'));
+    if (el.toggleFreqBtn) el.toggleFreqBtn.addEventListener('click', () => setChartMetric('frequency'));
+    if (el.togglePctBtn) el.togglePctBtn.addEventListener('click', () => setChartMetric('percent'));
 
     // Dictionary Search Input
     const dictSearchInput = document.getElementById('dict-search-input');
@@ -267,6 +431,14 @@ function setupEventListeners() {
         });
     }
 
+    // Export SAV File from Data View Card
+    const btnExportSavData = document.getElementById('btn-export-sav-data');
+    if (btnExportSavData) {
+        btnExportSavData.addEventListener('click', () => {
+            window.location.href = '/api/data/download-sav';
+        });
+    }
+
     // Column Jump Dropdown Toggle click
     if (el.btnDataColumnJump) {
         el.btnDataColumnJump.addEventListener('click', () => {
@@ -299,37 +471,18 @@ function setupEventListeners() {
             }
         });
     }
+
+    setupRenameEventListeners();
 }
 
 // Theme Management
 function loadSavedTheme() {
-    const savedTheme = localStorage.getItem('spss-theme') || 'dark';
-    if (savedTheme === 'light') {
-        document.body.classList.add('light-theme');
-        el.themeIcon.setAttribute('data-lucide', 'sun');
-    } else {
-        document.body.classList.remove('light-theme');
-        el.themeIcon.setAttribute('data-lucide', 'moon');
-    }
+    document.body.classList.add('light-theme');
+    localStorage.setItem('spss-theme', 'light');
 }
 
 function toggleTheme() {
-    const body = document.body;
-    body.classList.toggle('light-theme');
-    
-    if (body.classList.contains('light-theme')) {
-        localStorage.setItem('spss-theme', 'light');
-        el.themeIcon.setAttribute('data-lucide', 'sun');
-    } else {
-        localStorage.setItem('spss-theme', 'dark');
-        el.themeIcon.setAttribute('data-lucide', 'moon');
-    }
-    lucide.createIcons();
-    
-    // Refresh the chart if one is currently visible to update grid/label colors
-    if (state.currentData) {
-        refreshCurrentChart();
-    }
+    // Theme switching is disabled (light-theme only)
 }
 
 // Tabs Navigation
@@ -375,8 +528,310 @@ function switchNavMenu(menuId) {
     if (menuId === 'data' && state.filename && (!state.dataViewLoaded || state.dataViewFilename !== state.filename)) {
         loadDataView(1);
     }
+
+    // Auto-fetch all frequencies if switching to frequency tab and not loaded yet
+    if (menuId === 'frequency' && state.filename) {
+        if (el.workspaceLayout) el.workspaceLayout.style.display = 'flex';
+        if (!state.frequenciesLoaded || state.frequenciesFilename !== state.filename) {
+            loadAllVariableFrequencies();
+        }
+    }
 }
 window.switchNavMenu = switchNavMenu;
+
+// Variable Deletion State
+let deleteVarsActiveTab = 'list';
+let deleteVarsUploadedList = [];
+let deleteVarsSelectedList = [];
+
+// Fetch and render presets dropdown
+async function loadDeleteVarsPresets() {
+    try {
+        const response = await fetch('/api/variables/deletion-presets');
+        if (!response.ok) throw new Error('Failed to load presets');
+        const presets = await response.json();
+        
+        const select = document.getElementById('delete-vars-preset-select');
+        if (select) {
+            // Keep first option
+            select.innerHTML = '<option value="">-- No Preset Selected --</option>';
+            presets.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = JSON.stringify(p.variables);
+                opt.textContent = `${p.name} (${p.variables.length} variables)`;
+                select.appendChild(opt);
+            });
+        }
+    } catch (e) {
+        console.error('Error fetching deletion presets:', e);
+    }
+}
+
+// Show delete variables inline error
+function showDeleteVarsError(msg) {
+    const errContainer = document.getElementById('delete-vars-step-error');
+    const errMsg = document.getElementById('delete-vars-step-error-msg');
+    if (errContainer && errMsg) {
+        errMsg.textContent = msg;
+        errContainer.style.display = 'flex';
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    }
+}
+window.showDeleteVarsError = showDeleteVarsError;
+
+// Clear delete variables inline error
+function clearDeleteVarsError() {
+    const errContainer = document.getElementById('delete-vars-step-error');
+    if (errContainer) {
+        errContainer.style.display = 'none';
+    }
+}
+window.clearDeleteVarsError = clearDeleteVarsError;
+
+// Open variable deletion modal
+function openDeleteVarsModal() {
+    if (!state.variables || state.variables.length === 0) {
+        showModal('Error', 'No active variables in dataset to delete.');
+        return;
+    }
+    
+    // Clear inline error
+    clearDeleteVarsError();
+    
+    // Clear inputs & state
+    deleteVarsActiveTab = 'list';
+    deleteVarsUploadedList = [];
+    deleteVarsSelectedList = [];
+    
+    const presetSelect = document.getElementById('delete-vars-preset-select');
+    if (presetSelect) presetSelect.value = '';
+    
+    const customNameInput = document.getElementById('delete-vars-custom-preset-name');
+    if (customNameInput) customNameInput.value = '';
+    
+    const fileStatus = document.getElementById('delete-vars-file-status');
+    if (fileStatus) fileStatus.style.display = 'none';
+    
+    const fileInput = document.getElementById('delete-vars-file-input');
+    if (fileInput) fileInput.value = '';
+    
+    const checklistSearch = document.getElementById('delete-vars-search-input');
+    if (checklistSearch) checklistSearch.value = '';
+    
+    const selectMatchingBtn = document.getElementById('btn-delete-vars-select-matching');
+    if (selectMatchingBtn) selectMatchingBtn.style.display = 'none';
+    
+    // Go to first step
+    goToDeleteVarsConfig();
+    
+    // Switch tabs to list
+    switchDeleteTab('list');
+    
+    // Render variables checklist
+    renderDeleteVarsChecklist();
+    
+    // Load presets history
+    loadDeleteVarsPresets();
+    
+    // Show modal
+    const modal = document.getElementById('modal-delete-vars');
+    if (modal) modal.classList.add('active');
+}
+window.openDeleteVarsModal = openDeleteVarsModal;
+
+// Close deletion modal
+function closeDeleteVarsModal() {
+    const modal = document.getElementById('modal-delete-vars');
+    if (modal) modal.classList.remove('active');
+}
+window.closeDeleteVarsModal = closeDeleteVarsModal;
+
+// Tab switcher
+function switchDeleteTab(tabId) {
+    deleteVarsActiveTab = tabId;
+    clearDeleteVarsError();
+    
+    const btnList = document.getElementById('delete-tab-btn-list');
+    const btnFile = document.getElementById('delete-tab-btn-file');
+    const contentList = document.getElementById('delete-tab-content-list');
+    const contentFile = document.getElementById('delete-tab-content-file');
+    
+    if (tabId === 'list') {
+        if (btnList) btnList.classList.add('active');
+        if (btnFile) btnFile.classList.remove('active');
+        if (contentList) contentList.style.display = 'flex';
+        if (contentFile) contentFile.style.display = 'none';
+    } else {
+        if (btnList) btnList.classList.remove('active');
+        if (btnFile) btnFile.classList.add('active');
+        if (contentList) contentList.style.display = 'none';
+        if (contentFile) contentFile.style.display = 'flex';
+    }
+}
+window.switchDeleteTab = switchDeleteTab;
+
+// Render checklist of all active variables
+function renderDeleteVarsChecklist() {
+    const container = document.getElementById('delete-vars-checklist-container');
+    if (!container) return;
+    
+    container.innerHTML = state.variables.map(v => {
+        const labelText = v.variable_label ? ` - ${v.variable_label}` : '';
+        return `
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: var(--text-primary); cursor: pointer; padding: 0.15rem 0;">
+                <input type="checkbox" class="delete-var-cb" value="${v.variable_name}" onchange="updateDeleteVarsCountSelected()">
+                <span style="font-family: monospace; font-weight: 600;">${v.variable_name}</span>
+                <span style="color: var(--text-secondary); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 250px;" title="${v.variable_label || ''}">${labelText}</span>
+            </label>
+        `;
+    }).join('');
+    
+    updateDeleteVarsCountSelected();
+}
+
+// Update the checkbox selection count display
+function updateDeleteVarsCountSelected() {
+    clearDeleteVarsError();
+    const cbs = document.querySelectorAll('.delete-var-cb');
+    const count = Array.from(cbs).filter(cb => cb.checked).length;
+    
+    const display = document.getElementById('delete-vars-count-selected');
+    if (display) {
+        display.textContent = `${count} variables selected`;
+    }
+}
+window.updateDeleteVarsCountSelected = updateDeleteVarsCountSelected;
+
+// Bulk select/clear checkboxes
+function toggleAllDeleteVars(checked) {
+    const cbs = document.querySelectorAll('.delete-var-cb');
+    cbs.forEach(cb => cb.checked = checked);
+    updateDeleteVarsCountSelected();
+}
+window.toggleAllDeleteVars = toggleAllDeleteVars;
+
+// Bulk check variables that match the active search criteria (are visible)
+function selectMatchingDeleteVars() {
+    const container = document.getElementById('delete-vars-checklist-container');
+    if (!container) return;
+    
+    const labels = container.querySelectorAll('label');
+    labels.forEach(label => {
+        if (label.style.display !== 'none') {
+            const cb = label.querySelector('input');
+            if (cb) cb.checked = true;
+        }
+    });
+    updateDeleteVarsCountSelected();
+}
+window.selectMatchingDeleteVars = selectMatchingDeleteVars;
+
+// Go to confirmation step
+function goToDeleteVarsConfirmation() {
+    deleteVarsSelectedList = [];
+    
+    if (deleteVarsActiveTab === 'list') {
+        const cbs = document.querySelectorAll('.delete-var-cb');
+        deleteVarsSelectedList = Array.from(cbs).filter(cb => cb.checked).map(cb => cb.value);
+    } else {
+        deleteVarsSelectedList = deleteVarsUploadedList;
+    }
+    
+    if (deleteVarsSelectedList.length === 0) {
+        showDeleteVarsError('Please select or upload at least one variable to delete.');
+        return;
+    }
+    
+    if (deleteVarsSelectedList.length >= state.variables.length) {
+        showDeleteVarsError('You cannot delete all variables from the dataset. At least one variable must remain.');
+        return;
+    }
+    
+    // Fill confirmation list
+    const confirmList = document.getElementById('delete-vars-confirmation-list');
+    if (confirmList) {
+        confirmList.textContent = deleteVarsSelectedList.join(', ');
+    }
+    
+    // Toggle views
+    const configView = document.getElementById('delete-vars-step-config');
+    const confirmView = document.getElementById('delete-vars-step-confirm');
+    
+    if (configView) configView.style.display = 'none';
+    if (confirmView) confirmView.style.display = 'flex';
+}
+window.goToDeleteVarsConfirmation = goToDeleteVarsConfirmation;
+
+// Go back to config step
+function goToDeleteVarsConfig() {
+    const configView = document.getElementById('delete-vars-step-config');
+    const confirmView = document.getElementById('delete-vars-step-confirm');
+    
+    if (configView) configView.style.display = 'flex';
+    if (confirmView) confirmView.style.display = 'none';
+}
+window.goToDeleteVarsConfig = goToDeleteVarsConfig;
+
+// Execute backend API call to delete variables
+async function executeVariablesDeletion() {
+    if (deleteVarsSelectedList.length === 0) return;
+    
+    const presetNameInput = document.getElementById('delete-vars-custom-preset-name');
+    const presetName = presetNameInput ? presetNameInput.value.trim() : "";
+    
+    const btn = document.getElementById('btn-delete-vars-confirm');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" style="width: 12px; height: 12px; border-width: 2px; margin: 0;"></span> Deleting...';
+    
+    try {
+        const response = await fetch('/api/variables/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                variables: deleteVarsSelectedList,
+                preset_name: presetName || null
+            })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to delete variables');
+        }
+        
+        const res = await response.json();
+        
+        // Update local session state dictionary
+        state.variables = res.dictionary;
+        
+        // Invalidate Data View since columns are changed
+        state.dataViewLoaded = false;
+        state.dataViewFilename = null;
+        state.dataViewColumns = [];
+        state.dataViewRows = [];
+        
+        // Re-render variable list & builders
+        renderVariableLists();
+        populateMultiResponseBuilderCheckboxes();
+        populateCrosstabBuilders();
+        renderDataDictionaryTable();
+        
+        // Close modal
+        closeDeleteVarsModal();
+        
+        // Show success alert
+        showModal('Success', `Successfully deleted ${res.deleted_count} variables. ${res.remaining_count} variables remain in the dataset.`);
+        
+    } catch (e) {
+        showModal('Error', e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+window.executeVariablesDeletion = executeVariablesDeletion;
 
 // Copy Crosstab Table to Clipboard in TSV format
 async function copyCrosstabsToClipboard() {
@@ -533,7 +988,6 @@ function showModal(title, message) {
 function hideModal() {
     el.modalBackdrop.classList.remove('active');
 }
-
 // Chart Metric Management
 function setChartMetric(metric) {
     if (state.chartMetric === metric) return;
@@ -541,20 +995,14 @@ function setChartMetric(metric) {
     state.chartMetric = metric;
     
     // Update button states
-    if (metric === 'frequency') {
-        el.toggleFreqBtn.classList.add('active');
-        el.togglePctBtn.classList.remove('active');
-    } else {
-        el.toggleFreqBtn.classList.remove('active');
-        el.togglePctBtn.classList.add('active');
-    }
+    if (el.toggleFreqBtn) el.toggleFreqBtn.classList.toggle('active', metric === 'frequency');
+    if (el.togglePctBtn) el.togglePctBtn.classList.toggle('active', metric !== 'frequency');
     
     // Refresh visual representation
     if (state.currentData) {
         refreshCurrentChart();
     }
 }
-
 // Refresh active chart based on cached data, selected variable type, and active metric
 function refreshCurrentChart() {
     if (!state.currentData) return;
@@ -699,9 +1147,12 @@ async function fetchProjectsList() {
                             <div style="font-size: 0.6rem; color: var(--text-muted);">${dateStr}</div>
                         </td>
                         <td style="padding: 0.45rem 0.5rem; color: var(--text-secondary);">${proj.row_count.toLocaleString()}</td>
-                        <td style="padding: 0.45rem 0.5rem; text-align: right;">
+                        <td style="padding: 0.45rem 0.5rem; text-align: right; display: flex; justify-content: flex-end; gap: 0.35rem;">
                             <button class="btn btn-primary" style="padding: 0.2rem 0.5rem; font-size: 0.65rem;" onclick="loadProject('${proj.id}')">
                                 <i data-lucide="play" style="width: 10px; height: 10px; margin-right: 0.15rem;"></i> Load
+                            </button>
+                            <button class="btn btn-danger" style="padding: 0.2rem 0.5rem; font-size: 0.65rem;" onclick="deleteProject('${proj.id}', '${proj.filename}', event)" title="Delete this dataset history">
+                                <i data-lucide="trash-2" style="width: 10px; height: 10px;"></i>
                             </button>
                         </td>
                     </tr>
@@ -718,6 +1169,43 @@ async function fetchProjectsList() {
         el.existingProjectsContainer.style.display = 'none';
     }
 }
+
+// Delete a project from database and disk
+async function deleteProject(projectId, filename, event) {
+    if (event) event.stopPropagation();
+    
+    const confirmDelete = confirm("Are you sure you want to delete this dataset? This will permanently remove it from the server disk and database history.");
+    if (!confirmDelete) return;
+    
+    try {
+        const response = await fetch(`/api/project/${projectId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to delete project');
+        }
+        
+        // Refresh project list
+        fetchProjectsList();
+        
+        // If the deleted project was the active session, reset view and go home
+        if (state.filename === filename) {
+            state.filename = null;
+            state.rowCount = 0;
+            state.variableCount = 0;
+            state.variables = [];
+            state.multiResponseGroups = [];
+            goHome();
+        }
+        
+    } catch (e) {
+        console.error('Error deleting project:', e);
+        showModal('Error', `Failed to delete dataset: ${e.message}`);
+    }
+}
+window.deleteProject = deleteProject;
 
 // Load a specific project by ID
 async function loadProject(projectId) {
@@ -783,9 +1271,10 @@ async function loadProject(projectId) {
     }
 }
 window.loadProject = loadProject;
-
 // Render Left Sidebar Lists
 function renderVariableLists() {
+    state.frequenciesLoaded = false;
+    
     // 1. Render Multi-Response List
     el.multiResponseList.innerHTML = '';
     state.multiResponseGroups.forEach(group => {
@@ -797,7 +1286,7 @@ function renderVariableLists() {
             <i data-lucide="layers" class="var-icon"></i>
             <div class="var-info">
                 <span class="var-name" title="${group.group_name}">${group.group_name}</span>
-                <span class="var-label" title="${group.group_label}">${group.group_label}</span>
+                <span class="var-label" title="${group.group_label}"> - ${group.group_label}</span>
             </div>
         `;
         li.addEventListener('click', () => selectVariableOrGroup(group.group_id, true));
@@ -816,7 +1305,7 @@ function renderVariableLists() {
             <i data-lucide="database" class="var-icon"></i>
             <div class="var-info">
                 <span class="var-name" title="${v.variable_name}">${v.variable_name}</span>
-                <span class="var-label" title="${v.variable_label}">${v.variable_label}</span>
+                <span class="var-label" title="${v.variable_label}"> - ${v.variable_label}</span>
             </div>
         `;
         li.addEventListener('click', () => selectVariableOrGroup(v.variable_name, false));
@@ -825,6 +1314,12 @@ function renderVariableLists() {
     el.countVariables.textContent = state.variables.length;
     
     lucide.createIcons();
+    
+    // Auto-reload frequencies if currently on the Frequency tab
+    const viewFrequency = document.getElementById('view-frequency');
+    if (viewFrequency && viewFrequency.style.display === 'flex' && state.filename) {
+        loadAllVariableFrequencies();
+    }
 }
 
 // Populate multi-response configurator checkboxes
@@ -913,188 +1408,193 @@ async function selectVariableOrGroup(id, isGroup) {
     
     state.selectedVar = id;
     state.isSelectedGroup = isGroup;
+
+    // Check if frequencies are loaded, if not load them first
+    if (!state.frequenciesLoaded || state.frequenciesFilename !== state.filename) {
+        await loadAllVariableFrequencies();
+    }
     
-    // Hide placeholder and show workspace layout
-    el.noSelectionPlaceholder.style.display = 'none';
-    el.workspaceLayout.style.display = 'grid';
-    
-    // Automatically reset active tab to Frequency when a variable is clicked
-    switchNavMenu('frequency');
-    
-    // Fetch details
-    if (isGroup) {
-        await loadMultiResponseGroupDetails(id);
-    } else {
-        await loadSingleVariableDetails(id);
+    // Scroll to the card
+    const targetCard = document.getElementById(`freq-card-${id}`);
+    if (targetCard) {
+        targetCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 }
 
-// Load Details for Single Variable
-async function loadSingleVariableDetails(varName) {
+async function loadAllVariableFrequencies() {
+    if (!state.filename) return;
+    
+    // Show spinner inside el.freqTablesContainer
+    el.freqTablesContainer.innerHTML = `
+        <div id="freq-workspace-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); gap: 0.75rem; min-height: 200px;">
+            <i data-lucide="loader-2" class="animate-spin" style="width: 32px; height: 32px; color: var(--accent-violet);"></i>
+            <p style="font-size: 0.85rem;">Calculating and loading all variable frequencies...</p>
+        </div>
+    `;
+    lucide.createIcons();
+    
     try {
-        const response = await fetch(`/api/variable/${varName}`);
-        if (!response.ok) throw new Error('Failed to retrieve variable stats.');
-        const data = await response.json();
+        const response = await fetch('/api/frequencies/all');
+        if (!response.ok) throw new Error('Failed to retrieve all variable frequencies.');
+        const allFrequencies = await response.json();
         
-        // Cache data
-        state.currentData = data;
-        
-        // Update Titles
-        el.displayVarTitle.innerHTML = `<span class="card-title-left"><i data-lucide="table"></i> Frequency Table: ${data.variable_name}</span>`;
-        
-        // Build Table
-        el.statsTable.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Value</th>
-                    <th>Value Label</th>
-                    <th>Frequency</th>
-                    <th>Percent</th>
-                    <th>Valid Percent</th>
-                    <th>Cumulative %</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.distribution.map(row => `
-                    <tr class="${row.is_missing ? 'total-row' : ''}" style="${row.is_missing ? 'color: var(--text-muted);' : ''}">
-                        <td style="font-family: monospace; font-weight: bold;">${row.value === null ? 'Missing' : row.value}</td>
-                        <td>${row.label || ''}</td>
-                        <td>${row.frequency.toLocaleString()}</td>
-                        <td>${row.percent}%</td>
-                        <td>${row.valid_percent !== null ? row.valid_percent + '%' : '-'}</td>
-                        <td>${row.cumulative_percent !== null ? row.cumulative_percent + '%' : '-'}</td>
-                    </tr>
-                `).join('')}
-                <tr class="total-row">
-                    <td>Total</td>
-                    <td>Valid Cases</td>
-                    <td>${data.valid_cases.toLocaleString()}</td>
-                    <td>${((data.valid_cases / data.total_cases) * 100).toFixed(1)}%</td>
-                    <td>100%</td>
-                    <td>-</td>
-                </tr>
-                <tr class="total-row">
-                    <td>Total</td>
-                    <td>Overall Sample</td>
-                    <td>${data.total_cases.toLocaleString()}</td>
-                    <td>100%</td>
-                    <td>-</td>
-                    <td>-</td>
-                </tr>
-            </tbody>
-        `;
-        
-        // Update Attributes Card
-        el.attrName.textContent = data.variable_name;
-        el.attrLevel.textContent = data.measurement_level;
-        el.attrType.textContent = data.type;
-        el.attrFormat.textContent = data.format;
-        el.attrLabel.value = data.variable_label;
-        el.groupActions.style.display = 'none';
-        
-        // Populate Collapsible value labels
-        el.valLabelsCollapsible.style.display = 'block';
-        el.valLabelsList.innerHTML = '';
-        
-        const labelsMap = data.value_labels || {};
-        const entries = Object.entries(labelsMap);
-        if (entries.length > 0) {
-            entries.forEach(([val, label]) => {
-                const div = document.createElement('div');
-                div.className = 'val-label-row';
-                div.innerHTML = `<span class="val-label-code">${val}</span><span class="val-label-text">${label}</span>`;
-                el.valLabelsList.appendChild(div);
-            });
-        } else {
-            el.valLabelsList.innerHTML = '<div style="color: var(--text-muted); font-size: 0.75rem; padding: 0.35rem 0;">No value labels mapped for this variable.</div>';
+        if (allFrequencies.length === 0) {
+            el.freqTablesContainer.innerHTML = `
+                <div id="freq-workspace-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); padding: 2rem;">
+                    <i data-lucide="info" style="width: 32px; height: 32px;"></i>
+                    <p style="font-size: 0.8rem; margin-top: 0.5rem;">No variables available in the dataset.</p>
+                </div>
+            `;
+            lucide.createIcons();
+            return;
         }
         
-        // Reset collapsible height
-        if (el.valLabelsContent.classList.contains('open')) {
-            el.valLabelsContent.classList.remove('open');
-            el.valLabelsToggle.querySelector('i').setAttribute('data-lucide', 'chevron-down');
-        }
+        // Render each card inside container
+        let htmlContent = '';
+        allFrequencies.forEach(data => {
+            if (data.is_group) {
+                htmlContent += renderGroupFrequencyCard(data);
+            } else {
+                htmlContent += renderVariableFrequencyCard(data);
+            }
+        });
         
-        // Render Chart
-        refreshCurrentChart();
+        el.freqTablesContainer.innerHTML = htmlContent;
+        
+        state.frequenciesLoaded = true;
+        state.frequenciesFilename = state.filename;
+        
+        // Re-highlight the selected item in the list if one exists
+        if (state.selectedVar) {
+            const listToSearch = state.isSelectedGroup ? el.multiResponseList : el.singleVariablesList;
+            const activeItem = listToSearch.querySelector(`.variable-item[data-id="${state.selectedVar}"]`);
+            if (activeItem) {
+                activeItem.classList.add('active');
+                const targetCard = document.getElementById(`freq-card-${state.selectedVar}`);
+                if (targetCard) {
+                    targetCard.scrollIntoView({ behavior: 'auto', block: 'start' });
+                }
+            }
+        }
         
     } catch (e) {
-        showModal('Error Loading Variable', e.message);
+        el.freqTablesContainer.innerHTML = `
+            <div id="freq-workspace-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-danger); padding: 2rem; gap: 0.5rem;">
+                <i data-lucide="alert-triangle" style="width: 32px; height: 32px;"></i>
+                <p style="font-size: 0.85rem; font-weight: bold;">Error Loading Frequencies</p>
+                <p style="font-size: 0.75rem; color: var(--text-secondary); max-width: 400px; text-align: center;">${e.message}</p>
+            </div>
+        `;
     }
+    
     lucide.createIcons();
 }
 
-// Load Details for Multi-Response Group
-async function loadMultiResponseGroupDetails(groupId) {
-    try {
-        const response = await fetch(`/api/multi-response/group/${groupId}`);
-        if (!response.ok) throw new Error('Failed to retrieve multi-response group stats.');
-        const data = await response.json();
-        
-        // Cache data
-        state.currentData = data;
-        
-        // Update Title
-        el.displayVarTitle.innerHTML = `<span class="card-title-left"><i data-lucide="layers"></i> Multi-Response Table: ${data.group_name}</span>`;
-        
-        // Build Table
-        el.statsTable.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Variable</th>
-                    <th>Option Label</th>
-                    <th>Frequencies (Checked)</th>
-                    <th>% of Selections</th>
-                    <th>% of Respondents (Cases)</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${data.distribution.map(row => `
-                    <tr>
-                        <td style="font-family: monospace; font-weight: bold; color: var(--accent-cyan);">${row.variable_name}</td>
-                        <td>${row.label}</td>
-                        <td>${row.frequency.toLocaleString()}</td>
-                        <td>${row.percent_responses}%</td>
-                        <td>${row.percent_cases}%</td>
-                    </tr>
-                `).join('')}
-                <tr class="total-row">
-                    <td>Total</td>
-                    <td>Responses (Selections)</td>
-                    <td>${data.total_responses.toLocaleString()}</td>
-                    <td>100.0%</td>
-                    <td>-</td>
-                </tr>
-                <tr class="total-row">
-                    <td>Total</td>
-                    <td>Valid Respondents (N)</td>
-                    <td>${data.valid_respondents.toLocaleString()}</td>
-                    <td>-</td>
-                    <td>-</td>
-                </tr>
-            </tbody>
-        `;
-        
-        // Update Attributes Card
-        el.attrName.textContent = data.group_name;
-        el.attrLevel.textContent = 'Multi-Response';
-        el.attrType.textContent = 'Merged Dict';
-        el.attrFormat.textContent = 'Multiple Dichotomy';
-        el.attrLabel.value = data.group_label;
-        
-        // Show delete button
-        el.groupActions.style.display = 'block';
-        
-        // Collapsible value labels don't apply to merged multi-responses directly
-        el.valLabelsCollapsible.style.display = 'none';
-        
-        // Render Chart
-        refreshCurrentChart();
-        
-    } catch (e) {
-        showModal('Error Loading Group', e.message);
-    }
-    lucide.createIcons();
+function renderGroupFrequencyCard(data) {
+    return `
+        <div class="card" id="freq-card-${data.group_id}" style="margin-bottom: 0.75rem;">
+            <h2 class="card-title" style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                <span class="card-title-left"><i data-lucide="layers" style="color: var(--accent-violet);"></i> Multi-Response Group: ${data.group_name}</span>
+                <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: normal; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;" title="${data.group_label || ''}">${data.group_label || ''}</span>
+            </h2>
+            <div class="table-container">
+                <table style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th>Variable</th>
+                            <th>Option Label</th>
+                            <th>Frequencies (Checked)</th>
+                            <th>% of Selections</th>
+                            <th>% of Respondents (Cases)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.distribution.map(row => `
+                            <tr>
+                                <td style="font-family: monospace; font-weight: bold; color: var(--accent-cyan);">${row.variable_name}</td>
+                                <td>${row.label}</td>
+                                <td>${row.frequency.toLocaleString()}</td>
+                                <td>${row.percent_responses}%</td>
+                                <td>${row.percent_cases}%</td>
+                            </tr>
+                        `).join('')}
+                        <tr class="total-row">
+                            <td>Total</td>
+                            <td>Responses (Selections)</td>
+                            <td>${data.total_responses.toLocaleString()}</td>
+                            <td>100.0%</td>
+                            <td>-</td>
+                        </tr>
+                        <tr class="total-row">
+                            <td>Total</td>
+                            <td>Valid Respondents (N)</td>
+                            <td>${data.valid_respondents.toLocaleString()}</td>
+                            <td>-</td>
+                            <td>-</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function renderVariableFrequencyCard(data) {
+    return `
+        <div class="card" id="freq-card-${data.variable_name}" style="margin-bottom: 0.75rem;">
+            <h2 class="card-title" style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;">
+                <span class="card-title-left"><i data-lucide="table" style="color: var(--accent-cyan);"></i> Variable: ${data.variable_name}</span>
+                <span style="font-size: 0.75rem; color: var(--text-secondary); font-weight: normal; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;" title="${data.variable_label || ''}">${data.variable_label || ''}</span>
+            </h2>
+            <div class="meta-row-compact" style="display: flex; gap: 1rem; font-size: 0.72rem; color: var(--text-secondary); margin-bottom: 0.5rem; padding: 0 0.5rem; border-bottom: 1px solid rgba(255,255,255,0.02); padding-bottom: 0.4rem;">
+                <span><strong>Measurement:</strong> ${data.measurement_level || 'unknown'}</span>
+                <span><strong>Type:</strong> ${data.type || 'unknown'}</span>
+                <span><strong>Format:</strong> ${data.format || ''}</span>
+            </div>
+            <div class="table-container">
+                <table style="width: 100%;">
+                    <thead>
+                        <tr>
+                            <th>Value</th>
+                            <th>Value Label</th>
+                            <th>Frequency</th>
+                            <th>Percent</th>
+                            <th>Valid Percent</th>
+                            <th>Cumulative %</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${data.distribution.map(row => `
+                            <tr class="${row.is_missing ? 'total-row' : ''}" style="${row.is_missing ? 'color: var(--text-muted);' : ''}">
+                                <td style="font-family: monospace; font-weight: bold;">${row.value === null ? 'Missing' : row.value}</td>
+                                <td>${row.label || ''}</td>
+                                <td>${row.frequency.toLocaleString()}</td>
+                                <td>${row.percent}%</td>
+                                <td>${row.valid_percent !== null ? row.valid_percent + '%' : '-'}</td>
+                                <td>${row.cumulative_percent !== null ? row.cumulative_percent + '%' : '-'}</td>
+                            </tr>
+                        `).join('')}
+                        <tr class="total-row">
+                            <td>Total</td>
+                            <td>Valid Cases</td>
+                            <td>${data.valid_cases.toLocaleString()}</td>
+                            <td>${((data.valid_cases / data.total_cases) * 100).toFixed(1)}%</td>
+                            <td>100%</td>
+                            <td>-</td>
+                        </tr>
+                        <tr class="total-row">
+                            <td>Total</td>
+                            <td>Overall Sample</td>
+                            <td>${data.total_cases.toLocaleString()}</td>
+                            <td>100%</td>
+                            <td>-</td>
+                            <td>-</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
 }
 
 // Generate Cross-Tabulation
@@ -1513,6 +2013,7 @@ function getThemeColors() {
 
 // Render dynamic visualization using Chart.js
 function renderChart(labels, data, labelText, orientation = 'vertical') {
+    if (!el.distributionChart) return;
     if (state.chartInstance) {
         state.chartInstance.destroy();
     }
@@ -2306,3 +2807,1383 @@ function jumpToColumn(colName) {
         }, 300);
     }
 }
+
+
+// ==========================================
+// VARIABLE/LABEL RENAMING MODAL & ACTIONS
+// ==========================================
+let renameVarActiveTab = 'single';
+let renameBulkNamesMap = {};
+
+let renameLabelActiveTab = 'single';
+let renameLabelBulkMap = {};
+
+function setupRenameEventListeners() {
+    // 1. Variable Rename Modal triggers
+    const btnRenameVar = document.getElementById('btn-rename-var-card');
+    if (btnRenameVar) {
+        btnRenameVar.addEventListener('click', openRenameVarModal);
+    }
+    
+    // Select variable change listener for populating fields in Single tab
+    const selectVar = document.getElementById('rename-var-select');
+    if (selectVar) {
+        selectVar.addEventListener('change', (e) => {
+            const varName = e.target.value;
+            const newNameInput = document.getElementById('rename-var-new-name');
+            if (varName) {
+                const found = state.variables.find(v => v.variable_name === varName);
+                if (found) {
+                    if (newNameInput) newNameInput.value = found.variable_name;
+                }
+            } else {
+                if (newNameInput) newNameInput.value = '';
+            }
+        });
+    }
+    
+    // Dropzone for Bulk Names
+    const namesDropzone = document.getElementById('rename-bulk-names-dropzone');
+    const namesFileInput = document.getElementById('rename-bulk-names-file-input');
+    if (namesDropzone && namesFileInput) {
+        namesDropzone.addEventListener('click', () => namesFileInput.click());
+        namesDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            namesDropzone.classList.add('dragover');
+        });
+        namesDropzone.addEventListener('dragleave', () => {
+            namesDropzone.classList.remove('dragover');
+        });
+        namesDropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            namesDropzone.classList.remove('dragover');
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleRenameBulkNamesFile(e.dataTransfer.files[0]);
+            }
+        });
+        namesFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                handleRenameBulkNamesFile(e.target.files[0]);
+            }
+        });
+    }
+    
+    // 2. Label Rename Modal triggers
+    const btnRenameLabel = document.getElementById('btn-rename-label-card');
+    if (btnRenameLabel) {
+        btnRenameLabel.addEventListener('click', openRenameLabelModal);
+    }
+    
+    // Select variable change listener for populating label field in Single label tab
+    const selectLabel = document.getElementById('rename-label-var-select');
+    if (selectLabel) {
+        selectLabel.addEventListener('change', (e) => {
+            const varName = e.target.value;
+            const newLabelInput = document.getElementById('rename-label-new-label');
+            if (varName) {
+                const found = state.variables.find(v => v.variable_name === varName);
+                if (found) {
+                    if (newLabelInput) newLabelInput.value = found.variable_label || '';
+                }
+            } else {
+                if (newLabelInput) newLabelInput.value = '';
+            }
+        });
+    }
+    
+    // Dropzone for Bulk Labels
+    const labelsDropzone = document.getElementById('rename-bulk-labels-dropzone');
+    const labelsFileInput = document.getElementById('rename-bulk-labels-file-input');
+    if (labelsDropzone && labelsFileInput) {
+        labelsDropzone.addEventListener('click', () => labelsFileInput.click());
+        labelsDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            labelsDropzone.classList.add('dragover');
+        });
+        labelsDropzone.addEventListener('dragleave', () => {
+            labelsDropzone.classList.remove('dragover');
+        });
+        labelsDropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            labelsDropzone.classList.remove('dragover');
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleRenameBulkLabelsFile(e.dataTransfer.files[0]);
+            }
+        });
+        labelsFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                handleRenameBulkLabelsFile(e.target.files[0]);
+            }
+        });
+    }
+
+    // 3. SPSS Syntax Execution Modal triggers
+    const btnExecuteSyntaxCard = document.getElementById('btn-execute-syntax-card');
+    if (btnExecuteSyntaxCard) {
+        btnExecuteSyntaxCard.addEventListener('click', openExecuteSyntaxModal);
+    }
+
+    const syntaxDropzone = document.getElementById('execute-syntax-dropzone');
+    const syntaxFileInput = document.getElementById('execute-syntax-file-input');
+    if (syntaxDropzone && syntaxFileInput) {
+        syntaxDropzone.addEventListener('click', () => syntaxFileInput.click());
+        syntaxDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            syntaxDropzone.classList.add('dragover');
+        });
+        syntaxDropzone.addEventListener('dragleave', () => {
+            syntaxDropzone.classList.remove('dragover');
+        });
+        syntaxDropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            syntaxDropzone.classList.remove('dragover');
+            if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                handleExecuteSyntaxFile(e.dataTransfer.files[0]);
+            }
+        });
+        syntaxFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files[0]) {
+                handleExecuteSyntaxFile(e.target.files[0]);
+            }
+        });
+    }
+
+    const syntaxCodeInput = document.getElementById('syntax-code-input');
+    if (syntaxCodeInput) {
+        // Sync backdrop text and coordinates on input
+        syntaxCodeInput.addEventListener('input', (e) => {
+            updateEditorBackdrop();
+            const translated = translateSpssToPandas(e.target.value);
+            const previewEl = document.getElementById('syntax-pandas-preview');
+            if (previewEl) {
+                previewEl.textContent = translated;
+            }
+            handleAutocompleteTrigger(e.target);
+        });
+
+        // Sync scroll movements
+        syntaxCodeInput.addEventListener('scroll', (e) => {
+            const backdrop = document.getElementById('syntax-code-backdrop');
+            if (backdrop) {
+                backdrop.scrollTop = e.target.scrollTop;
+                backdrop.scrollLeft = e.target.scrollLeft;
+            }
+        });
+
+        // Key bindings for suggestions navigation
+        syntaxCodeInput.addEventListener('keydown', (e) => {
+            handleEditorKeydown(e, e.target);
+        });
+
+        // Close suggestions dropdown when focus is lost
+        syntaxCodeInput.addEventListener('blur', () => {
+            // A short timeout is needed so mouse click selections can be registered
+            setTimeout(hideAutocomplete, 200);
+        });
+    }
+
+    const btnExecuteSyntaxRun = document.getElementById('btn-execute-syntax-run');
+    if (btnExecuteSyntaxRun) {
+        btnExecuteSyntaxRun.addEventListener('click', runSpssSyntaxExecution);
+    }
+}
+
+// Variable renaming modal show / hide / save
+function openRenameVarModal() {
+    if (!state.variables || state.variables.length === 0) {
+        showModal('Error', 'No active variables in dataset to rename.');
+        return;
+    }
+    
+    clearRenameVarError();
+    
+    renameVarActiveTab = 'single';
+    renameBulkNamesMap = {};
+    
+    switchRenameTab('single');
+    
+    const namesFileInput = document.getElementById('rename-bulk-names-file-input');
+    if (namesFileInput) namesFileInput.value = '';
+    const namesFileStatus = document.getElementById('rename-bulk-names-file-status');
+    if (namesFileStatus) namesFileStatus.style.display = 'none';
+    
+    const select = document.getElementById('rename-var-select');
+    if (select) {
+        select.innerHTML = '<option value="">-- Select Variable --</option>' + 
+            state.variables.map(v => `<option value="${v.variable_name}">${v.variable_name}${v.variable_label ? ' (' + v.variable_label + ')' : ''}</option>`).join('');
+        select.value = '';
+    }
+    
+    const newNameInput = document.getElementById('rename-var-new-name');
+    if (newNameInput) newNameInput.value = '';
+    
+    const modal = document.getElementById('modal-rename-var');
+    if (modal) modal.classList.add('active');
+}
+window.openRenameVarModal = openRenameVarModal;
+
+function closeRenameVarModal() {
+    const modal = document.getElementById('modal-rename-var');
+    if (modal) modal.classList.remove('active');
+}
+window.closeRenameVarModal = closeRenameVarModal;
+
+function switchRenameTab(tabId) {
+    renameVarActiveTab = tabId;
+    clearRenameVarError();
+    
+    const btnSingle = document.getElementById('rename-tab-btn-single');
+    const btnNames = document.getElementById('rename-tab-btn-bulk-names');
+    
+    const contentSingle = document.getElementById('rename-tab-content-single');
+    const contentNames = document.getElementById('rename-tab-content-bulk-names');
+    
+    if (btnSingle) btnSingle.classList.toggle('active', tabId === 'single');
+    if (btnNames) btnNames.classList.toggle('active', tabId === 'bulk_names');
+    
+    if (btnSingle) btnSingle.style.borderBottom = tabId === 'single' ? '2px solid var(--accent-violet)' : '2px solid transparent';
+    if (btnNames) btnNames.style.borderBottom = tabId === 'bulk_names' ? '2px solid var(--accent-violet)' : '2px solid transparent';
+    
+    if (btnSingle) btnSingle.style.color = tabId === 'single' ? 'var(--text-primary)' : 'var(--text-muted)';
+    if (btnNames) btnNames.style.color = tabId === 'bulk_names' ? 'var(--text-primary)' : 'var(--text-muted)';
+    
+    if (contentSingle) contentSingle.style.display = tabId === 'single' ? 'flex' : 'none';
+    if (contentNames) contentNames.style.display = tabId === 'bulk_names' ? 'flex' : 'none';
+}
+window.switchRenameTab = switchRenameTab;
+
+function showRenameVarError(msg) {
+    const errContainer = document.getElementById('rename-vars-step-error');
+    const errMsg = document.getElementById('rename-vars-step-error-msg');
+    if (errContainer && errMsg) {
+        errMsg.textContent = msg;
+        errContainer.style.display = 'flex';
+    }
+}
+window.showRenameVarError = showRenameVarError;
+
+function clearRenameVarError() {
+    const errContainer = document.getElementById('rename-vars-step-error');
+    if (errContainer) {
+        errContainer.style.display = 'none';
+    }
+}
+window.clearRenameVarError = clearRenameVarError;
+
+function handleRenameBulkNamesFile(file) {
+    if (file.type !== 'text/plain' && !file.name.endsWith('.txt')) {
+        showRenameVarError('Please upload a plain text (.txt) file.');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const text = e.target.result;
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        
+        if (lines.length === 0) {
+            showRenameVarError('The uploaded file is empty.');
+            return;
+        }
+        
+        const activeVarsMap = {};
+        state.variables.forEach(v => {
+            activeVarsMap[v.variable_name.toLowerCase()] = v.variable_name;
+        });
+        
+        const tempMap = {};
+        const newNamesSet = new Set();
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const parts = line.split('=');
+            if (parts.length !== 2) {
+                showRenameVarError(`Line ${i + 1} has invalid format. Must be old_name = new_name.`);
+                return;
+            }
+            
+            const oldNameRaw = parts[0].trim();
+            const newNameRaw = parts[1].trim();
+            
+            if (!oldNameRaw || !newNameRaw) {
+                showRenameVarError(`Line ${i + 1} contains empty variable name.`);
+                return;
+            }
+            
+            const oldNameLower = oldNameRaw.toLowerCase();
+            if (!activeVarsMap[oldNameLower]) {
+                showRenameVarError(`Variable "${oldNameRaw}" at line ${i + 1} does not exist in the current dataset.`);
+                return;
+            }
+            
+            const resolvedOldName = activeVarsMap[oldNameLower];
+            
+            // Validate new name format: alphanumeric + underscore, starts with letter, max 64 chars
+            const varNameRegex = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+            if (!varNameRegex.test(newNameRaw) || newNameRaw.length > 64) {
+                showRenameVarError(`Invalid new variable name "${newNameRaw}" at line ${i + 1}. Must start with a letter and contain only alphanumeric/underscores, max 64 characters.`);
+                return;
+            }
+            
+            if (newNamesSet.has(newNameRaw.toLowerCase())) {
+                showRenameVarError(`Duplicate target variable name "${newNameRaw}" in upload file.`);
+                return;
+            }
+            newNamesSet.add(newNameRaw.toLowerCase());
+            
+            tempMap[resolvedOldName] = newNameRaw;
+        }
+        
+        // Check collision with non-renamed existing variables
+        for (const [oldName, newName] of Object.entries(tempMap)) {
+            const newNameLower = newName.toLowerCase();
+            if (activeVarsMap[newNameLower] && !tempMap[activeVarsMap[newNameLower]]) {
+                showRenameVarError(`Target variable name "${newName}" already exists in the dataset.`);
+                return;
+            }
+        }
+        
+        clearRenameVarError();
+        renameBulkNamesMap = tempMap;
+        
+        const fileNameText = document.getElementById('rename-bulk-names-file-name-text');
+        const fileStatus = document.getElementById('rename-bulk-names-file-status');
+        if (fileNameText) {
+            fileNameText.textContent = `${file.name} (${Object.keys(tempMap).length} renames parsed)`;
+        }
+        if (fileStatus) {
+            fileStatus.style.display = 'flex';
+        }
+    };
+    reader.readAsText(file);
+}
+
+async function executeVariableRename() {
+    clearRenameVarError();
+    
+    let payload = {
+        mode: renameVarActiveTab
+    };
+    
+    if (renameVarActiveTab === 'single') {
+        const select = document.getElementById('rename-var-select');
+        const newNameInput = document.getElementById('rename-var-new-name');
+        
+        const varName = select ? select.value : '';
+        const newName = newNameInput ? newNameInput.value.trim() : '';
+        
+        if (!varName) {
+            showRenameVarError('Please select a variable.');
+            return;
+        }
+        if (!newName) {
+            showRenameVarError('Please enter a new name.');
+            return;
+        }
+        
+        const varNameRegex = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+        if (!varNameRegex.test(newName) || newName.length > 64) {
+            showRenameVarError('Invalid variable name. Must start with a letter and contain only alphanumeric characters and underscores, max 64 characters.');
+            return;
+        }
+        
+        payload.variable = varName;
+        payload.new_name = newName;
+        payload.new_label = null;
+        
+    } else if (renameVarActiveTab === 'bulk_names') {
+        if (!renameBulkNamesMap || Object.keys(renameBulkNamesMap).length === 0) {
+            showRenameVarError('Please upload and parse a valid bulk names file.');
+            return;
+        }
+        payload.renames = renameBulkNamesMap;
+    }
+    
+    const btnSave = document.getElementById('btn-rename-var-save');
+    if (btnSave) {
+        btnSave.disabled = true;
+        btnSave.textContent = 'Saving Changes...';
+    }
+    
+    try {
+        const response = await fetch('/api/variables/rename', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to rename variables.');
+        }
+        
+        const data = await response.json();
+        
+        state.variables = data.dictionary;
+        
+        if (payload.mode === 'single') {
+            const oldName = payload.variable;
+            const newName = payload.new_name;
+            state.multiResponseGroups.forEach(group => {
+                group.variables = group.variables.map(v => v === oldName ? newName : v);
+            });
+        } else if (payload.mode === 'bulk_names') {
+            const renameMap = payload.renames;
+            state.multiResponseGroups.forEach(group => {
+                group.variables = group.variables.map(v => renameMap[v] !== undefined ? renameMap[v] : v);
+            });
+        }
+        
+        state.dataViewLoaded = false;
+        state.dataViewFilename = null;
+        state.dataViewColumns = [];
+        state.dataViewRows = [];
+        
+        renderVariableLists();
+        populateMultiResponseBuilderCheckboxes();
+        populateCrosstabBuilders();
+        renderDataDictionaryTable();
+        
+        closeRenameVarModal();
+        showModal('Success', 'Variables renamed successfully.');
+        
+    } catch (e) {
+        showRenameVarError(e.message);
+    } finally {
+        if (btnSave) {
+            btnSave.disabled = false;
+            btnSave.textContent = 'Save Changes';
+        }
+    }
+}
+window.executeVariableRename = executeVariableRename;
+
+
+// Label renaming modal show / hide / save
+function openRenameLabelModal() {
+    if (!state.variables || state.variables.length === 0) {
+        showModal('Error', 'No active variables in dataset to modify labels.');
+        return;
+    }
+    
+    clearRenameLabelError();
+    
+    renameLabelActiveTab = 'single';
+    renameLabelBulkMap = {};
+    
+    switchRenameLabelTab('single');
+    
+    const labelsFileInput = document.getElementById('rename-bulk-labels-file-input');
+    if (labelsFileInput) labelsFileInput.value = '';
+    const labelsFileStatus = document.getElementById('rename-bulk-labels-file-status');
+    if (labelsFileStatus) labelsFileStatus.style.display = 'none';
+    
+    const select = document.getElementById('rename-label-var-select');
+    if (select) {
+        select.innerHTML = '<option value="">-- Select Variable --</option>' + 
+            state.variables.map(v => `<option value="${v.variable_name}">${v.variable_name}${v.variable_label ? ' (' + v.variable_label + ')' : ''}</option>`).join('');
+        select.value = '';
+    }
+    
+    const newLabelInput = document.getElementById('rename-label-new-label');
+    if (newLabelInput) newLabelInput.value = '';
+    
+    const modal = document.getElementById('modal-rename-label');
+    if (modal) modal.classList.add('active');
+}
+window.openRenameLabelModal = openRenameLabelModal;
+
+function closeRenameLabelModal() {
+    const modal = document.getElementById('modal-rename-label');
+    if (modal) modal.classList.remove('active');
+}
+window.closeRenameLabelModal = closeRenameLabelModal;
+
+function switchRenameLabelTab(tabId) {
+    renameLabelActiveTab = tabId;
+    clearRenameLabelError();
+    
+    const btnSingle = document.getElementById('rename-label-tab-btn-single');
+    const btnLabels = document.getElementById('rename-label-tab-btn-bulk-labels');
+    
+    const contentSingle = document.getElementById('rename-label-tab-content-single');
+    const contentLabels = document.getElementById('rename-label-tab-content-bulk-labels');
+    
+    if (btnSingle) btnSingle.classList.toggle('active', tabId === 'single');
+    if (btnLabels) btnLabels.classList.toggle('active', tabId === 'bulk_labels');
+    
+    if (btnSingle) btnSingle.style.borderBottom = tabId === 'single' ? '2px solid var(--accent-violet)' : '2px solid transparent';
+    if (btnLabels) btnLabels.style.borderBottom = tabId === 'bulk_labels' ? '2px solid var(--accent-violet)' : '2px solid transparent';
+    
+    if (btnSingle) btnSingle.style.color = tabId === 'single' ? 'var(--text-primary)' : 'var(--text-muted)';
+    if (btnLabels) btnLabels.style.color = tabId === 'bulk_labels' ? 'var(--text-primary)' : 'var(--text-muted)';
+    
+    if (contentSingle) contentSingle.style.display = tabId === 'single' ? 'flex' : 'none';
+    if (contentLabels) contentLabels.style.display = tabId === 'bulk_labels' ? 'flex' : 'none';
+}
+window.switchRenameLabelTab = switchRenameLabelTab;
+
+function showRenameLabelError(msg) {
+    const errContainer = document.getElementById('rename-label-step-error');
+    const errMsg = document.getElementById('rename-label-step-error-msg');
+    if (errContainer && errMsg) {
+        errMsg.textContent = msg;
+        errContainer.style.display = 'flex';
+    }
+}
+window.showRenameLabelError = showRenameLabelError;
+
+function clearRenameLabelError() {
+    const errContainer = document.getElementById('rename-label-step-error');
+    if (errContainer) {
+        errContainer.style.display = 'none';
+    }
+}
+window.clearRenameLabelError = clearRenameLabelError;
+
+function handleRenameBulkLabelsFile(file) {
+    if (file.type !== 'text/plain' && !file.name.endsWith('.txt')) {
+        showRenameLabelError('Please upload a plain text (.txt) file.');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const text = e.target.result;
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+        
+        if (lines.length === 0) {
+            showRenameLabelError('The uploaded file is empty.');
+            return;
+        }
+        
+        const activeVarsMap = {};
+        state.variables.forEach(v => {
+            activeVarsMap[v.variable_name.toLowerCase()] = v.variable_name;
+        });
+        
+        const tempMap = {};
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const eqIndex = line.indexOf('=');
+            if (eqIndex === -1) {
+                showRenameLabelError(`Line ${i + 1} has invalid format. Must be variable_name = new_label.`);
+                return;
+            }
+            
+            const varNameRaw = line.substring(0, eqIndex).trim();
+            const labelRaw = line.substring(eqIndex + 1).trim();
+            
+            if (!varNameRaw) {
+                showRenameLabelError(`Line ${i + 1} contains empty variable name.`);
+                return;
+            }
+            
+            const varNameLower = varNameRaw.toLowerCase();
+            if (!activeVarsMap[varNameLower]) {
+                showRenameLabelError(`Variable "${varNameRaw}" at line ${i + 1} does not exist in the current dataset.`);
+                return;
+            }
+            
+            const resolvedVarName = activeVarsMap[varNameLower];
+            tempMap[resolvedVarName] = labelRaw;
+        }
+        
+        clearRenameLabelError();
+        renameLabelBulkMap = tempMap;
+        
+        const fileNameText = document.getElementById('rename-bulk-labels-file-name-text');
+        const fileStatus = document.getElementById('rename-bulk-labels-file-status');
+        if (fileNameText) {
+            fileNameText.textContent = `${file.name} (${Object.keys(tempMap).length} labels parsed)`;
+        }
+        if (fileStatus) {
+            fileStatus.style.display = 'flex';
+        }
+    };
+    reader.readAsText(file);
+}
+
+async function executeVariableLabelRename() {
+    clearRenameLabelError();
+    
+    let payload = {
+        mode: 'bulk_labels',
+        labels: {}
+    };
+    
+    if (renameLabelActiveTab === 'single') {
+        const select = document.getElementById('rename-label-var-select');
+        const newLabelInput = document.getElementById('rename-label-new-label');
+        
+        const varName = select ? select.value : '';
+        const newLabel = newLabelInput ? newLabelInput.value.trim() : '';
+        
+        if (!varName) {
+            showRenameLabelError('Please select a variable.');
+            return;
+        }
+        
+        payload.labels[varName] = newLabel;
+        
+    } else if (renameLabelActiveTab === 'bulk_labels') {
+        if (!renameLabelBulkMap || Object.keys(renameLabelBulkMap).length === 0) {
+            showRenameLabelError('Please upload and parse a valid bulk labels file.');
+            return;
+        }
+        payload.labels = renameLabelBulkMap;
+    }
+    
+    const btnSave = document.getElementById('btn-rename-label-save');
+    if (btnSave) {
+        btnSave.disabled = true;
+        btnSave.textContent = 'Saving Changes...';
+    }
+    
+    try {
+        const response = await fetch('/api/variables/rename', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to rename labels.');
+        }
+        
+        const data = await response.json();
+        
+        state.variables = data.dictionary;
+        
+        state.dataViewLoaded = false;
+        state.dataViewFilename = null;
+        state.dataViewColumns = [];
+        state.dataViewRows = [];
+        
+        renderVariableLists();
+        populateMultiResponseBuilderCheckboxes();
+        populateCrosstabBuilders();
+        renderDataDictionaryTable();
+        
+        closeRenameLabelModal();
+        showModal('Success', 'Labels updated successfully.');
+        
+    } catch (e) {
+        showRenameLabelError(e.message);
+    } finally {
+        if (btnSave) {
+            btnSave.disabled = false;
+            btnSave.textContent = 'Save Changes';
+        }
+    }
+}
+window.executeVariableLabelRename = executeVariableLabelRename;
+
+// ==========================================
+// SPSS SYNTAX EXECUTION MODAL & ACTIONS
+// ==========================================
+function openExecuteSyntaxModal() {
+    clearExecuteSyntaxError();
+    const codeInput = document.getElementById('syntax-code-input');
+    const previewEl = document.getElementById('syntax-pandas-preview');
+    const fileInput = document.getElementById('execute-syntax-file-input');
+    
+    if (codeInput) codeInput.value = '';
+    if (previewEl) previewEl.textContent = '# Type SPSS syntax in the left panel to see real-time translation.';
+    if (fileInput) fileInput.value = '';
+    
+    hideAutocomplete();
+    updateEditorBackdrop();
+    
+    const modal = document.getElementById('modal-execute-syntax');
+    if (modal) {
+        modal.classList.add('active');
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    }
+}
+window.openExecuteSyntaxModal = openExecuteSyntaxModal;
+
+function closeExecuteSyntaxModal() {
+    const modal = document.getElementById('modal-execute-syntax');
+    if (modal) modal.classList.remove('active');
+}
+window.closeExecuteSyntaxModal = closeExecuteSyntaxModal;
+
+function showExecuteSyntaxError(msg) {
+    const errContainer = document.getElementById('execute-syntax-step-error');
+    const errMsg = document.getElementById('execute-syntax-step-error-msg');
+    if (errContainer && errMsg) {
+        errMsg.textContent = msg;
+        errContainer.style.display = 'flex';
+    }
+}
+window.showExecuteSyntaxError = showExecuteSyntaxError;
+
+function clearExecuteSyntaxError() {
+    const errContainer = document.getElementById('execute-syntax-step-error');
+    if (errContainer) {
+        errContainer.style.display = 'none';
+    }
+}
+window.clearExecuteSyntaxError = clearExecuteSyntaxError;
+
+function handleExecuteSyntaxFile(file) {
+    const isSps = file.name.endsWith('.sps');
+    const isTxt = file.name.endsWith('.txt');
+    if (!isSps && !isTxt) {
+        showExecuteSyntaxError('Please upload an SPSS syntax file (.sps) or plain text file (.txt).');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const text = e.target.result;
+        const codeInput = document.getElementById('syntax-code-input');
+        if (codeInput) {
+            codeInput.value = text;
+            // Trigger input event to update preview
+            codeInput.dispatchEvent(new Event('input'));
+        }
+        clearExecuteSyntaxError();
+    };
+    reader.readAsText(file);
+}
+window.handleExecuteSyntaxFile = handleExecuteSyntaxFile;
+
+async function runSpssSyntaxExecution() {
+    clearExecuteSyntaxError();
+    
+    const codeInput = document.getElementById('syntax-code-input');
+    const syntax = codeInput ? codeInput.value.trim() : '';
+    
+    if (!syntax) {
+        showExecuteSyntaxError('Please write or upload SPSS Syntax code before executing.');
+        return;
+    }
+    
+    const btnRun = document.getElementById('btn-execute-syntax-run');
+    let origBtnHtml = '';
+    if (btnRun) {
+        origBtnHtml = btnRun.innerHTML;
+        btnRun.disabled = true;
+        btnRun.textContent = 'Executing Syntax...';
+    }
+    
+    try {
+        const response = await fetch('/api/variables/execute-syntax', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ syntax })
+        });
+        
+        if (!response.ok) {
+            const err = await response.json();
+            throw new Error(err.detail || 'Failed to execute syntax.');
+        }
+        
+        const data = await response.json();
+        
+        state.variables = data.dictionary;
+        
+        state.dataViewLoaded = false;
+        state.dataViewFilename = null;
+        state.dataViewColumns = [];
+        state.dataViewRows = [];
+        
+        renderVariableLists();
+        populateMultiResponseBuilderCheckboxes();
+        populateCrosstabBuilders();
+        renderDataDictionaryTable();
+        
+        closeExecuteSyntaxModal();
+        showModal('Success', data.message || 'Syntax executed successfully.');
+        
+    } catch (e) {
+        showExecuteSyntaxError(e.message);
+    } finally {
+        if (btnRun) {
+            btnRun.disabled = false;
+            btnRun.innerHTML = origBtnHtml;
+        }
+    }
+}
+window.runSpssSyntaxExecution = runSpssSyntaxExecution;
+
+function splitSpssSyntaxJS(syntaxText) {
+    const lines = syntaxText.split(/\r?\n/);
+    const cleanLines = [];
+    let inComment = false;
+    
+    for (let line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        
+        if (inComment) {
+            if (line.includes('.')) {
+                const parts = line.split(/\.(.+)/);
+                inComment = false;
+                if (parts[1] && parts[1].trim()) {
+                    cleanLines.push(parts[1]);
+                }
+            }
+            continue;
+        }
+        
+        if (trimmed.startsWith('*') || trimmed.toUpperCase().startsWith('COMMENT')) {
+            if (line.includes('.')) {
+                const parts = line.split(/\.(.+)/);
+                if (parts[1] && parts[1].trim()) {
+                    cleanLines.push(parts[1]);
+                }
+            } else {
+                inComment = true;
+            }
+            continue;
+        }
+        
+        cleanLines.push(line);
+    }
+    
+    const fullText = cleanLines.join('\n');
+    const statements = [];
+    let current = [];
+    let inQuote = false;
+    let quoteChar = null;
+    
+    for (let i = 0; i < fullText.length; i++) {
+        const char = fullText[i];
+        if (char === "'" || char === '"') {
+            if (!inQuote) {
+                inQuote = true;
+                quoteChar = char;
+            } else if (char === quoteChar) {
+                inQuote = false;
+                quoteChar = null;
+            }
+        }
+        
+        if (char === '.' && !inQuote) {
+            statements.push(current.join('').trim());
+            current = [];
+        } else {
+            current.push(char);
+        }
+    }
+    
+    const rem = current.join('').trim();
+    if (rem) {
+        statements.push(rem);
+    }
+    
+    return statements.map(s => s.trim()).filter(s => s.length > 0);
+}
+window.splitSpssSyntaxJS = splitSpssSyntaxJS;
+
+function translateSpssToPandas(syntaxText) {
+    if (!syntaxText || !syntaxText.trim()) {
+        return "# Type SPSS syntax in the left panel to see real-time translation.";
+    }
+    
+    try {
+        const statements = splitSpssSyntaxJS(syntaxText);
+        const pythonLines = ["# --- Python / Pandas Equivalent Code ---"];
+        const variableRenameMap = {};
+        
+        for (let stmt of statements) {
+            const stmtClean = stmt.replace(/\s+/g, ' ').trim();
+            if (!stmtClean) continue;
+            
+            const firstSpace = stmtClean.indexOf(' ');
+            let verb = '';
+            let rest = '';
+            if (firstSpace === -1) {
+                verb = stmtClean.toUpperCase();
+            } else {
+                verb = stmtClean.substring(0, firstSpace).toUpperCase();
+                rest = stmtClean.substring(firstSpace + 1).trim();
+            }
+            
+            let verbPhrase = verb;
+            if (rest) {
+                const secondSpace = rest.indexOf(' ');
+                const secondWord = (secondSpace === -1) ? rest.toUpperCase() : rest.substring(0, secondSpace).toUpperCase();
+                verbPhrase = verb + ' ' + secondWord;
+            }
+            
+            // 1. DELETE VARIABLES
+            if (verbPhrase.startsWith("DELETE VARIABLES") || verb.startsWith("DELETE")) {
+                let content = stmtClean;
+                if (verbPhrase.startsWith("DELETE VARIABLES")) {
+                    content = stmtClean.substring("DELETE VARIABLES".length).trim();
+                } else {
+                    content = stmtClean.substring("DELETE".length).trim();
+                    if (content.toUpperCase().startsWith("VARIABLES")) {
+                        content = content.substring("VARIABLES".length).trim();
+                    }
+                }
+                const vars = content.split(/\s+/).filter(v => v.trim());
+                if (vars.length > 0) {
+                    const quotedVars = vars.map(v => `'${v}'`).join(', ');
+                    pythonLines.push(`df = df.drop(columns=[${quotedVars}])`);
+                } else {
+                    pythonLines.push(`# Warning: Empty DELETE VARIABLES statement`);
+                }
+            }
+            // 2. RENAME VARIABLES
+            else if (verbPhrase.startsWith("RENAME VARIABLES") || verb.startsWith("RENAME")) {
+                let content = stmtClean;
+                if (verbPhrase.startsWith("RENAME VARIABLES")) {
+                    content = stmtClean.substring("RENAME VARIABLES".length).trim();
+                } else {
+                    content = stmtClean.substring("RENAME".length).trim();
+                    if (content.toUpperCase().startsWith("VARIABLES")) {
+                        content = content.substring("VARIABLES".length).trim();
+                    }
+                }
+                
+                const cleaned = content.replace(/\(/g, ' ').replace(/\)/g, ' ').replace(/\s*=\s*/g, '=');
+                const tokens = cleaned.split(/\s+/).filter(t => t.trim());
+                
+                const stepRenameMap = {};
+                for (let rTok of tokens) {
+                    if (rTok.includes('=')) {
+                        const parts = rTok.split('=');
+                        const src = parts[0].trim();
+                        const dst = parts[1].trim();
+                        if (src && dst) {
+                            stepRenameMap[src] = dst;
+                            variableRenameMap[src] = dst;
+                        }
+                    }
+                }
+                
+                if (Object.keys(stepRenameMap).length > 0) {
+                    const renameDictStr = Object.entries(stepRenameMap)
+                        .map(([k, v]) => `'${k}': '${v}'`)
+                        .join(', ');
+                    pythonLines.push(`df = df.rename(columns={${renameDictStr}})`);
+                } else {
+                    pythonLines.push(`# Warning: Empty RENAME VARIABLES statement`);
+                }
+            }
+            // 3. VARIABLE LABELS
+            else if (verbPhrase.startsWith("VARIABLE LABELS") || verb.startsWith("VARIABLE")) {
+                let content = stmtClean;
+                if (verbPhrase.startsWith("VARIABLE LABELS")) {
+                    content = stmtClean.substring("VARIABLE LABELS".length).trim();
+                } else {
+                    content = stmtClean.substring("VARIABLE".length).trim();
+                    if (content.toUpperCase().startsWith("LABELS")) {
+                        content = content.substring("LABELS".length).trim();
+                    }
+                }
+                
+                const pattern = /([a-zA-Z0-9_]+)\s+(['"])(.*?)\2/g;
+                let match;
+                let matchedAny = false;
+                
+                while ((match = pattern.exec(content)) !== null) {
+                    const origVar = match[1];
+                    const val = match[3];
+                    const resolvedVar = variableRenameMap[origVar] || origVar;
+                    pythonLines.push(`column_labels['${resolvedVar}'] = '${val.replace(/'/g, "\\'")}'`);
+                    matchedAny = true;
+                }
+                
+                if (!matchedAny) {
+                    pythonLines.push(`# Warning: Could not parse VARIABLE LABELS syntax`);
+                }
+            }
+            // 4. VALUE LABELS
+            else if (verbPhrase.startsWith("VALUE LABELS") || verb.startsWith("VALUE")) {
+                let content = stmtClean;
+                if (verbPhrase.startsWith("VALUE LABELS")) {
+                    content = stmtClean.substring("VALUE LABELS".length).trim();
+                } else {
+                    content = stmtClean.substring("VALUE".length).trim();
+                    if (content.toUpperCase().startsWith("LABELS")) {
+                        content = content.substring("LABELS".length).trim();
+                    }
+                }
+                
+                const parts = content.split('/');
+                let matchedAny = false;
+                for (let part of parts) {
+                    part = part.trim();
+                    if (!part) continue;
+                    
+                    const subtokens = part.split(/\s+/);
+                    if (subtokens.length < 2) continue;
+                    
+                    const rawVar = subtokens[0];
+                    const mappingStr = part.substring(rawVar.length).trim();
+                    const resolvedVar = variableRenameMap[rawVar] || rawVar;
+                    
+                    const pairPattern = /(\d+(?:\.\d+)?|['"].*?['"])\s+(['"])(.*?)\2/g;
+                    let pMatch;
+                    const valMap = [];
+                    
+                    while ((pMatch = pairPattern.exec(mappingStr)) !== null) {
+                        const valRaw = pMatch[1].replace(/['"]/g, '');
+                        const label = pMatch[3];
+                        
+                        let valVal = valRaw;
+                        if (!isNaN(valRaw) && valRaw.trim() !== '') {
+                            if (valRaw.includes('.')) {
+                                valVal = parseFloat(valRaw);
+                            } else {
+                                valVal = parseInt(valRaw, 10);
+                            }
+                        } else {
+                            valVal = `'${valRaw}'`;
+                        }
+                        
+                        valMap.push(`${typeof valVal === 'string' ? valVal : valVal}: '${label.replace(/'/g, "\\'")}'`);
+                    }
+                    
+                    if (valMap.length > 0) {
+                        pythonLines.push(`value_labels['${resolvedVar}'] = {${valMap.join(', ')}}`);
+                        matchedAny = true;
+                    }
+                }
+                
+                if (!matchedAny) {
+                    pythonLines.push(`# Warning: Could not parse VALUE LABELS syntax`);
+                }
+            }
+            // 5. COMPUTE
+            else if (verb.startsWith("COMPUTE")) {
+                const content = stmtClean.substring("COMPUTE".length).trim();
+                const eqIndex = content.indexOf('=');
+                if (eqIndex !== -1) {
+                    const targetVar = content.substring(0, eqIndex).trim();
+                    const rawExpr = content.substring(eqIndex + 1).trim();
+                    
+                    let expr = rawExpr;
+                    const sortedRenames = Object.keys(variableRenameMap).sort((a, b) => b.length - a.length);
+                    for (let oldName of sortedRenames) {
+                        const newName = variableRenameMap[oldName];
+                        const regex = new RegExp(`\\b${oldName}\\b`, 'g');
+                        expr = expr.replace(regex, newName);
+                    }
+                    
+                    let exprEval = expr;
+                    exprEval = exprEval.replace(/\bAND\b/gi, '&');
+                    exprEval = exprEval.replace(/\bOR\b/gi, '|');
+                    exprEval = exprEval.replace(/\bNOT\b/gi, '~');
+                    exprEval = exprEval.replace(/<>/g, '!=');
+                    exprEval = exprEval.replace(/(?<![<>=!])=(?!=)/g, '==');
+                    
+                    const isBool = /==|!=|>|<|>=|<=|&|\||~/.test(exprEval);
+                    if (isBool) {
+                        pythonLines.push(`df['${targetVar}'] = df.eval("${exprEval}").astype(int)`);
+                    } else {
+                        if (!isNaN(exprEval.trim()) && exprEval.trim() !== '') {
+                            pythonLines.push(`df['${targetVar}'] = ${exprEval.trim()}`);
+                        } else {
+                            pythonLines.push(`df['${targetVar}'] = df.eval("${exprEval}")`);
+                        }
+                    }
+                } else {
+                    pythonLines.push(`# Warning: Invalid COMPUTE statement format`);
+                }
+            }
+            // 6. MISSING VALUES
+            else if (verbPhrase.startsWith("MISSING VALUES") || verb.startsWith("MISSING")) {
+                let content = stmtClean;
+                if (verbPhrase.startsWith("MISSING VALUES")) {
+                    content = stmtClean.substring("MISSING VALUES".length).trim();
+                } else {
+                    content = stmtClean.substring("MISSING".length).trim();
+                    if (content.toUpperCase().startsWith("VALUES")) {
+                        content = content.substring("VALUES".length).trim();
+                    }
+                }
+                
+                const parts = content.split('/');
+                let matchedAny = false;
+                for (let part of parts) {
+                    part = part.trim();
+                    const match = part.match(/([a-zA-Z0-9_]+)\s*\((.*?)\)/);
+                    if (match) {
+                        const rawVar = match[1].trim();
+                        const valsStr = match[2].trim();
+                        const resolvedVar = variableRenameMap[rawVar] || rawVar;
+                        
+                        const vals = valsStr.split(',').map(v => v.trim().replace(/['"]/g, '')).filter(v => v.length > 0);
+                        const parsedVals = vals.map(v => {
+                            if (!isNaN(v) && v.trim() !== '') {
+                                return v;
+                            }
+                            return `'${v}'`;
+                        });
+                        
+                        pythonLines.push(`missing_values['${resolvedVar}'] = [${parsedVals.join(', ')}]`);
+                        matchedAny = true;
+                    }
+                }
+                if (!matchedAny) {
+                    pythonLines.push(`# Warning: Could not parse MISSING VALUES syntax`);
+                }
+            }
+            // 7. EXECUTE
+            else if (verb === "EXECUTE") {
+                pythonLines.push(`# Changes written successfully to disk`);
+            }
+            else {
+                pythonLines.push(`# Warning: Command '${verb}' is not supported and will be skipped.`);
+            }
+        }
+        
+        return pythonLines.join('\n');
+    } catch (e) {
+        return `# Error during translation: ${e.message}`;
+    }
+}
+window.translateSpssToPandas = translateSpssToPandas;
+
+// ==========================================
+// SPSS EDITOR SYNTAX HIGHLIGHTING & AUTOCOMPLETE
+// ==========================================
+let autocompleteActiveIndex = -1;
+let autocompleteSuggestions = [];
+
+function hideAutocomplete() {
+    const list = document.getElementById('spss-autocomplete-list');
+    if (list) list.style.display = 'none';
+    autocompleteActiveIndex = -1;
+    autocompleteSuggestions = [];
+}
+window.hideAutocomplete = hideAutocomplete;
+
+function handleAutocompleteTrigger(textarea) {
+    const text = textarea.value;
+    const cursor = textarea.selectionStart;
+    const beforeText = text.substring(0, cursor);
+    const wordMatch = beforeText.match(/[a-zA-Z_][a-zA-Z0-9_]*$/);
+    
+    if (!wordMatch) {
+        hideAutocomplete();
+        return;
+    }
+    
+    const currentWord = wordMatch[0];
+    const currentWordUpper = currentWord.toUpperCase();
+    
+    // Available variables list
+    const vars = (state.variables || []).map(v => v.variable_name);
+    // SPSS keywords
+    const keywords = [
+        "DELETE VARIABLES", "DELETE", "VARIABLES",
+        "RENAME VARIABLES", "RENAME",
+        "VARIABLE LABELS", "VARIABLE", "LABELS",
+        "VALUE LABELS", "VALUE",
+        "COMPUTE", "EXECUTE",
+        "MISSING VALUES", "MISSING", "VALUES"
+    ];
+    
+    // Filter suggestions
+    const matchedVars = vars.filter(v => v.toUpperCase().startsWith(currentWordUpper) && v.toUpperCase() !== currentWordUpper);
+    const matchedKeywords = keywords.filter(k => k.toUpperCase().startsWith(currentWordUpper) && k.toUpperCase() !== currentWordUpper);
+    
+    // Combine suggestions: first keywords, then variables
+    const suggestions = [];
+    matchedKeywords.forEach(k => suggestions.push({ name: k, type: "Keyword" }));
+    matchedVars.forEach(v => suggestions.push({ name: v, type: "Variable" }));
+    
+    if (suggestions.length === 0) {
+        hideAutocomplete();
+        return;
+    }
+    
+    autocompleteSuggestions = suggestions.slice(0, 10); // cap at 10 items
+    
+    // Keep index within boundaries
+    if (autocompleteActiveIndex < 0 || autocompleteActiveIndex >= autocompleteSuggestions.length) {
+        autocompleteActiveIndex = 0;
+    }
+    
+    renderAutocompleteDropdown(textarea, currentWord);
+}
+window.handleAutocompleteTrigger = handleAutocompleteTrigger;
+
+function renderAutocompleteDropdown(textarea, currentWord) {
+    const list = document.getElementById('spss-autocomplete-list');
+    if (!list) return;
+    
+    list.innerHTML = autocompleteSuggestions.map((s, idx) => `
+        <div class="spss-autocomplete-item ${idx === autocompleteActiveIndex ? 'active' : ''}" data-index="${idx}">
+            <span>${s.name}</span>
+            <span class="spss-autocomplete-meta">${s.type}</span>
+        </div>
+    `).join('');
+    
+    // Calculate caret coordinates inside monospace textarea
+    const text = textarea.value;
+    const cursor = textarea.selectionStart;
+    const beforeText = text.substring(0, cursor - currentWord.length);
+    const lines = beforeText.split("\n");
+    const currentRow = lines.length - 1;
+    const currentColumn = lines[lines.length - 1].length;
+    
+    // Constants matching monospace font styling details
+    const rowHeight = 16.8;
+    const charWidth = 7.2;
+    const padding = 8;
+    
+    let top = padding + (currentRow + 1) * rowHeight - textarea.scrollTop;
+    let left = padding + currentColumn * charWidth - textarea.scrollLeft;
+    
+    const container = textarea.parentElement;
+    
+    // Contain dropdown inside editor viewport boundaries
+    top = Math.max(8, Math.min(top, container.clientHeight - 160));
+    left = Math.max(8, Math.min(left, container.clientWidth - 230));
+    
+    list.style.top = `${top}px`;
+    list.style.left = `${left}px`;
+    list.style.display = 'flex';
+    
+    // Attach click listeners to autocomplete items
+    const items = list.querySelectorAll('.spss-autocomplete-item');
+    items.forEach(item => {
+        item.addEventListener('click', (e) => {
+            const idx = parseInt(item.getAttribute('data-index'), 10);
+            if (autocompleteSuggestions[idx]) {
+                insertSuggestion(textarea, autocompleteSuggestions[idx].name);
+            }
+        });
+    });
+}
+window.renderAutocompleteDropdown = renderAutocompleteDropdown;
+
+function insertSuggestion(textarea, word) {
+    const text = textarea.value;
+    const cursor = textarea.selectionStart;
+    const beforeText = text.substring(0, cursor);
+    const afterText = text.substring(cursor);
+    
+    const wordMatch = beforeText.match(/[a-zA-Z_][a-zA-Z0-9_]*$/);
+    if (wordMatch) {
+        const start = cursor - wordMatch[0].length;
+        textarea.value = text.substring(0, start) + word + " " + afterText;
+        textarea.selectionStart = textarea.selectionEnd = start + word.length + 1; // cursor after word and space
+    }
+    
+    updateEditorBackdrop();
+    hideAutocomplete();
+    
+    // Trigger input event to update Pandas preview
+    textarea.dispatchEvent(new Event('input'));
+}
+window.insertSuggestion = insertSuggestion;
+
+function handleEditorKeydown(e, textarea) {
+    const list = document.getElementById('spss-autocomplete-list');
+    if (!list || list.style.display === 'none') {
+        return;
+    }
+    
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        autocompleteActiveIndex = (autocompleteActiveIndex + 1) % autocompleteSuggestions.length;
+        const currentWord = ""; // not needed for rendering position since it is already displayed
+        renderAutocompleteDropdown(textarea, currentWord);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        autocompleteActiveIndex = (autocompleteActiveIndex - 1 + autocompleteSuggestions.length) % autocompleteSuggestions.length;
+        const currentWord = "";
+        renderAutocompleteDropdown(textarea, currentWord);
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        if (autocompleteActiveIndex >= 0 && autocompleteActiveIndex < autocompleteSuggestions.length) {
+            insertSuggestion(textarea, autocompleteSuggestions[autocompleteActiveIndex].name);
+        }
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        hideAutocomplete();
+    }
+}
+window.handleEditorKeydown = handleEditorKeydown;
+
+function updateEditorBackdrop() {
+    const textarea = document.getElementById('syntax-code-input');
+    const backdrop = document.getElementById('syntax-code-backdrop');
+    if (textarea && backdrop) {
+        backdrop.innerHTML = highlightSpssSyntax(textarea.value);
+        backdrop.scrollTop = textarea.scrollTop;
+        backdrop.scrollLeft = textarea.scrollLeft;
+    }
+}
+window.updateEditorBackdrop = updateEditorBackdrop;
+
+function highlightSpssSyntax(text) {
+    if (!text) return "";
+    
+    // Escape HTML characters
+    let escaped = text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+        
+    // Standard SPSS keywords to highlight
+    const keywords = [
+        "DELETE VARIABLES", "DELETE", "VARIABLES",
+        "RENAME VARIABLES", "RENAME",
+        "VARIABLE LABELS", "VARIABLE", "LABELS",
+        "VALUE LABELS", "VALUE",
+        "COMPUTE", "EXECUTE",
+        "MISSING VALUES", "MISSING", "VALUES"
+    ];
+    
+    // Active variables for lookup (case-insensitive)
+    const activeVars = new Set((state.variables || []).map(v => v.variable_name.toUpperCase()));
+    
+    const lines = escaped.split("\n");
+    const highlightedLines = lines.map(line => {
+        let trimmed = line.trim();
+        if (trimmed.startsWith("*") || trimmed.toUpperCase().startsWith("COMMENT")) {
+            return `<span class="spss-comment">${line}</span>`;
+        }
+        
+        const tokenRegex = /(".*?"|'.*?'|[0-9]+(?:\.[0-9]+)?|[a-zA-Z_][a-zA-Z0-9_]*|[+\-*\/=<>!&|~(),.\/]+|\s+)/g;
+        const tokens = line.match(tokenRegex) || [line];
+        let lineResult = "";
+        
+        for (let tok of tokens) {
+            let tokUpper = tok.toUpperCase().trim();
+            if (!tok.trim()) {
+                lineResult += tok;
+            } else if (tok.startsWith('"') || tok.startsWith("'")) {
+                lineResult += `<span class="spss-string">${tok}</span>`;
+            } else if (!isNaN(tok) && !isNaN(parseFloat(tok))) {
+                lineResult += `<span class="spss-number">${tok}</span>`;
+            } else if (keywords.includes(tokUpper)) {
+                lineResult += `<span class="spss-keyword">${tok}</span>`;
+            } else if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tok)) {
+                if (activeVars.has(tokUpper)) {
+                    lineResult += `<span class="spss-variable-valid">${tok}</span>`;
+                } else {
+                    lineResult += `<span class="spss-variable-invalid" title="Variable '${tok}' does not exist">${tok}</span>`;
+                }
+            } else {
+                lineResult += tok;
+            }
+        }
+        
+        return lineResult;
+    });
+    
+    return highlightedLines.join("\n") + (text.endsWith("\n") ? "\n" : "");
+}
+window.highlightSpssSyntax = highlightSpssSyntax;

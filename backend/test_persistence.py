@@ -415,6 +415,467 @@ class TestDatabasePersistence(unittest.TestCase):
         app.SESSION["df"] = None
         app.SESSION["meta"] = None
 
+    def test_delete_variables(self):
+        """Verify that variable deletion safely writes SAV file, updates DB, and saves presets."""
+        import shutil
+        from app import DeleteVariablesRequest
+        
+        # 1. Setup temporary SAV file copy
+        temp_sav_dir = tempfile.mkdtemp()
+        temp_sav_path = os.path.join(temp_sav_dir, "test_survey.sav")
+        original_sav_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sample_data.sav')
+        shutil.copyfile(original_sav_path, temp_sav_path)
+        
+        # 2. Insert project record in datasets table
+        project_id = "test-delete-project-id"
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO datasets (id, filename, upload_time, row_count, variable_count, file_path)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (project_id, "test_survey.sav", "2026-06-03T18:00:00", 120, 9, temp_sav_path))
+        conn.commit()
+        conn.close()
+        
+        # 3. Setup SESSION
+        df, meta = app.parse_spss_file(temp_sav_path)
+        app.SESSION["id"] = project_id
+        app.SESSION["df"] = df
+        app.SESSION["meta"] = meta
+        app.SESSION["dictionary"] = app.extract_data_dictionary(df, meta)
+        app.SESSION["file_path"] = temp_sav_path
+        
+        # Verify initial state
+        self.assertIn("Gender", app.SESSION["df"].columns)
+        self.assertEqual(len(app.SESSION["df"].columns), 9)
+        
+        # 4. Perform Deletion
+        req = DeleteVariablesRequest(variables=["Gender"], preset_name="Test Preset")
+        res = app.delete_variables(req)
+        
+        # 5. Assertions
+        # Verify Session updated
+        self.assertNotIn("Gender", app.SESSION["df"].columns)
+        self.assertEqual(len(app.SESSION["df"].columns), 8)
+        self.assertEqual(len(app.SESSION["dictionary"]), 8)
+        
+        # Verify Database updated for dataset
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT variable_count FROM datasets WHERE id = ?", (project_id,))
+        var_count = cursor.fetchone()["variable_count"]
+        self.assertEqual(var_count, 8)
+        
+        # Verify presets saved
+        cursor.execute("SELECT * FROM deleted_variable_presets")
+        preset = cursor.fetchone()
+        self.assertIsNotNone(preset)
+        self.assertEqual(preset["name"], "Test Preset")
+        self.assertIn("Gender", json.loads(preset["variables"]))
+        conn.close()
+        
+        # 6. Cleanup
+        if os.path.exists(temp_sav_path):
+            os.remove(temp_sav_path)
+        shutil.rmtree(temp_sav_dir)
+        app.SESSION["id"] = None
+        app.SESSION["df"] = None
+        app.SESSION["meta"] = None
+        app.SESSION["dictionary"] = None
+        app.SESSION["file_path"] = None
+
+    def test_download_sav(self):
+        import pandas as pd
+        import pyreadstat
+        import shutil
+        
+        # 1. Create a dummy dataset
+        temp_sav_dir = tempfile.mkdtemp()
+        temp_sav_path = os.path.join(temp_sav_dir, "dummy_download.sav")
+        
+        df = pd.DataFrame({"VarA": [1, 2], "VarB": ["X", "Y"]})
+        pyreadstat.write_sav(df, temp_sav_path)
+        
+        # 2. Setup Session
+        app.SESSION["file_path"] = temp_sav_path
+        app.SESSION["original_filename"] = "dummy_download.sav"
+        
+        # 3. Request download
+        res = app.download_sav_file()
+        
+        # 4. Assertions
+        self.assertIsNotNone(res)
+        self.assertEqual(res.path, temp_sav_path)
+        self.assertEqual(res.filename, "dummy_download.sav")
+        self.assertEqual(res.media_type, "application/x-spss-sav")
+        
+        # 5. Cleanup
+        if os.path.exists(temp_sav_path):
+            os.remove(temp_sav_path)
+        shutil.rmtree(temp_sav_dir)
+        app.SESSION["file_path"] = None
+        app.SESSION["original_filename"] = None
+
+    def test_project_scoped_presets(self):
+        # 1. Setup two dummy datasets/projects in database
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO datasets (id, filename, upload_time, row_count, variable_count, file_path) VALUES (?, ?, ?, ?, ?, ?)",
+                       ("proj-a", "file_a.sav", "2026-06-03T18:00:00", 100, 5, "/dummy/a.sav"))
+        cursor.execute("INSERT INTO datasets (id, filename, upload_time, row_count, variable_count, file_path) VALUES (?, ?, ?, ?, ?, ?)",
+                       ("proj-b", "file_b.sav", "2026-06-03T19:00:00", 100, 5, "/dummy/b.sav"))
+        
+        # 2. Insert presets for both projects
+        cursor.execute("INSERT INTO deleted_variable_presets (id, dataset_id, name, variables, created_at) VALUES (?, ?, ?, ?, ?)",
+                       ("preset-1", "proj-a", "Preset ProjA", '["Var1"]', "2026-06-03T18:10:00"))
+        cursor.execute("INSERT INTO deleted_variable_presets (id, dataset_id, name, variables, created_at) VALUES (?, ?, ?, ?, ?)",
+                       ("preset-2", "proj-b", "Preset ProjB", '["Var2"]', "2026-06-03T19:10:00"))
+        conn.commit()
+        conn.close()
+        
+        # 3. Test active project A session
+        app.SESSION["id"] = "proj-a"
+        presets_a = app.get_deletion_presets()
+        self.assertEqual(len(presets_a), 1)
+        self.assertEqual(presets_a[0]["id"], "preset-1")
+        self.assertEqual(presets_a[0]["name"], "Preset ProjA")
+        
+        # 4. Test active project B session
+        app.SESSION["id"] = "proj-b"
+        presets_b = app.get_deletion_presets()
+        self.assertEqual(len(presets_b), 1)
+        self.assertEqual(presets_b[0]["id"], "preset-2")
+        self.assertEqual(presets_b[0]["name"], "Preset ProjB")
+        
+        # Cleanup
+        app.SESSION["id"] = None
+
+    def test_delete_project(self):
+        import shutil
+        
+        # 1. Create a dummy sav file
+        temp_sav_dir = tempfile.mkdtemp()
+        temp_sav_path = os.path.join(temp_sav_dir, "dummy_project_delete.sav")
+        with open(temp_sav_path, "w") as f:
+            f.write("dummy content")
+            
+        # 2. Setup datasets, groups, and presets in SQLite DB
+        project_id = "delete-me-project"
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO datasets (id, filename, upload_time, row_count, variable_count, file_path) VALUES (?, ?, ?, ?, ?, ?)",
+                       (project_id, "dummy_project_delete.sav", "2026-06-03T18:00:00", 10, 2, temp_sav_path))
+        cursor.execute("INSERT INTO multi_response_groups (dataset_id, group_id, group_name, group_label, variables, detection_source) VALUES (?, ?, ?, ?, ?, ?)",
+                       (project_id, "grp-1", "Group1", "Group 1 Label", '["Var1"]', "manual"))
+        cursor.execute("INSERT INTO deleted_variable_presets (id, dataset_id, name, variables, created_at) VALUES (?, ?, ?, ?, ?)",
+                       ("preset-1", project_id, "Preset1", '["Var1"]', "2026-06-03T18:10:00"))
+        conn.commit()
+        conn.close()
+        
+        # 3. Request deletion
+        app.SESSION["id"] = project_id
+        res = app.delete_project(project_id)
+        
+        # 4. Assertions
+        self.assertIsNotNone(res)
+        self.assertEqual(res["message"], "Project deleted successfully.")
+        
+        # Check active session is reset
+        self.assertIsNone(app.SESSION["id"])
+        
+        # Check database records are deleted (cascade)
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM datasets WHERE id = ?", (project_id,))
+        self.assertIsNone(cursor.fetchone())
+        cursor.execute("SELECT * FROM multi_response_groups WHERE dataset_id = ?", (project_id,))
+        self.assertIsNone(cursor.fetchone())
+        cursor.execute("SELECT * FROM deleted_variable_presets WHERE dataset_id = ?", (project_id,))
+        self.assertIsNone(cursor.fetchone())
+        conn.close()
+        
+        # Check file deleted from disk
+        self.assertFalse(os.path.exists(temp_sav_path))
+        
+        # Cleanup
+        if os.path.exists(temp_sav_path):
+            os.remove(temp_sav_path)
+        shutil.rmtree(temp_sav_dir)
+
+    def test_rename_variables(self):
+        """Verify that variable and label renaming operates correctly and updates SESSION / DB."""
+        import shutil
+        from app import RenameVariableRequest
+        
+        # 1. Setup temporary SAV file copy
+        temp_sav_dir = tempfile.mkdtemp()
+        temp_sav_path = os.path.join(temp_sav_dir, "test_survey_rename.sav")
+        original_sav_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sample_data.sav')
+        shutil.copyfile(original_sav_path, temp_sav_path)
+        
+        # 2. Insert project record and a multi-response group in SQLite DB
+        project_id = "test-rename-project-id"
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO datasets (id, filename, upload_time, row_count, variable_count, file_path)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (project_id, "test_survey_rename.sav", "2026-06-03T18:00:00", 120, 9, temp_sav_path))
+        
+        # Insert multi-response group containing Q1_1 and Q1_2
+        cursor.execute("""
+        INSERT INTO multi_response_groups (dataset_id, group_id, group_name, group_label, variables, checked_value, detection_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (project_id, "grp-q1", "Q1_Group", "Q1 Multi-Response Group", '["Q1_1", "Q1_2"]', "1", "manual"))
+        conn.commit()
+        conn.close()
+        
+        # 3. Setup SESSION
+        df, meta = app.parse_spss_file(temp_sav_path)
+        app.SESSION["id"] = project_id
+        app.SESSION["df"] = df
+        app.SESSION["meta"] = meta
+        app.SESSION["dictionary"] = app.extract_data_dictionary(df, meta)
+        app.SESSION["file_path"] = temp_sav_path
+        app.SESSION["multi_response_groups"] = {
+            "grp-q1": {
+                "group_id": "grp-q1",
+                "group_name": "Q1_Group",
+                "group_label": "Q1 Multi-Response Group",
+                "variables": ["Q1_1", "Q1_2"],
+                "checked_value": "1"
+            }
+        }
+        
+        # 4. Mode "single": Rename 'Gender' to 'gender_new' and update its label
+        req_single = RenameVariableRequest(
+            mode="single",
+            variable="Gender",
+            new_name="gender_new",
+            new_label="New Gender Label"
+        )
+        res_single = app.rename_variables(req_single)
+        self.assertEqual(res_single["message"], "Variables renamed successfully.")
+        self.assertIn("gender_new", app.SESSION["df"].columns)
+        self.assertNotIn("Gender", app.SESSION["df"].columns)
+        
+        gender_meta = next(v for v in app.SESSION["dictionary"] if v["variable_name"] == "gender_new")
+        self.assertEqual(gender_meta["variable_label"], "New Gender Label")
+        
+        # 5. Mode "bulk_names": Rename 'Q1_1' to 'Q1_1_new'
+        req_bulk_names = RenameVariableRequest(
+            mode="bulk_names",
+            renames={"Q1_1": "Q1_1_new"}
+        )
+        res_bulk = app.rename_variables(req_bulk_names)
+        self.assertEqual(res_bulk["message"], "Variables renamed successfully.")
+        self.assertIn("Q1_1_new", app.SESSION["df"].columns)
+        self.assertNotIn("Q1_1", app.SESSION["df"].columns)
+        
+        # Verify the multi-response group updated cascade
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT variables FROM multi_response_groups WHERE dataset_id = ? AND group_id = ?", (project_id, "grp-q1"))
+        grp_vars = json.loads(cursor.fetchone()["variables"])
+        self.assertIn("Q1_1_new", grp_vars)
+        self.assertNotIn("Q1_1", grp_vars)
+        conn.close()
+        
+        # Verify session group is also updated
+        self.assertIn("Q1_1_new", app.SESSION["multi_response_groups"]["grp-q1"]["variables"])
+        self.assertNotIn("Q1_1", app.SESSION["multi_response_groups"]["grp-q1"]["variables"])
+        
+        # 6. Mode "bulk_labels": Update label of 'gender_new'
+        req_bulk_labels = RenameVariableRequest(
+            mode="bulk_labels",
+            labels={"gender_new": "Updated Brand New Gender Label"}
+        )
+        res_labels = app.rename_variables(req_bulk_labels)
+        self.assertEqual(res_labels["message"], "Variables renamed successfully.")
+        gender_meta_updated = next(v for v in app.SESSION["dictionary"] if v["variable_name"] == "gender_new")
+        self.assertEqual(gender_meta_updated["variable_label"], "Updated Brand New Gender Label")
+        
+        # 7. Cleanup
+        if os.path.exists(temp_sav_path):
+            os.remove(temp_sav_path)
+        shutil.rmtree(temp_sav_dir)
+        app.SESSION["id"] = None
+        app.SESSION["df"] = None
+        app.SESSION["meta"] = None
+        app.SESSION["dictionary"] = None
+        app.SESSION["file_path"] = None
+        app.SESSION["multi_response_groups"] = {}
+
+    def test_spss_syntax_execution(self):
+        """Verify SPSS syntax execution endpoint parses commands, updates SAV file, cascades to DB and sets SESSION."""
+        import shutil
+        from app import ExecuteSyntaxRequest
+        
+        # 1. Setup temporary SAV file copy
+        temp_sav_dir = tempfile.mkdtemp()
+        temp_sav_path = os.path.join(temp_sav_dir, "test_survey_syntax.sav")
+        original_sav_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sample_data.sav')
+        shutil.copyfile(original_sav_path, temp_sav_path)
+        
+        # 2. Insert project record and a multi-response group in SQLite DB
+        project_id = "test-syntax-project-id"
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO datasets (id, filename, upload_time, row_count, variable_count, file_path)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (project_id, "test_survey_syntax.sav", "2026-06-03T18:00:00", 120, 9, temp_sav_path))
+        
+        # Insert multi-response group containing Q1_1 and Q1_2
+        cursor.execute("""
+        INSERT INTO multi_response_groups (dataset_id, group_id, group_name, group_label, variables, checked_value, detection_source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (project_id, "grp-q1", "Q1_Group", "Q1 Multi-Response Group", '["Q1_1", "Q1_2"]', "1", "manual"))
+        conn.commit()
+        conn.close()
+        
+        # 3. Setup SESSION
+        df, meta = app.parse_spss_file(temp_sav_path)
+        app.SESSION["id"] = project_id
+        app.SESSION["df"] = df
+        app.SESSION["meta"] = meta
+        app.SESSION["dictionary"] = app.extract_data_dictionary(df, meta)
+        app.SESSION["file_path"] = temp_sav_path
+        app.SESSION["multi_response_groups"] = {
+            "grp-q1": {
+                "group_id": "grp-q1",
+                "group_name": "Q1_Group",
+                "group_label": "Q1 Multi-Response Group",
+                "variables": ["Q1_1", "Q1_2"],
+                "checked_value": "1"
+            }
+        }
+        
+        # 4. Prepare SPSS syntax code block
+        syntax_code = """
+        * Delete Variable.
+        DELETE VARIABLES Gender.
+        
+        * Rename Q1_1.
+        RENAME VARIABLES (Q1_1 = Q1_1_new).
+        
+        * Set labels.
+        VARIABLE LABELS Q1_1_new 'New Q1_1 Label'.
+        VALUE LABELS Q1_1_new 1 'Checked' 0 'Unchecked'.
+        
+        * Compute a new variable.
+        COMPUTE computed_var = 5.
+        
+        * Missing values.
+        MISSING VALUES Q1_1_new (99).
+        
+        EXECUTE.
+        """
+        
+        # 5. Execute Syntax via API endpoint
+        req = ExecuteSyntaxRequest(syntax=syntax_code)
+        res = app.execute_syntax(req)
+        
+        # 6. Assertions
+        self.assertEqual(res["message"], "Syntax executed successfully.")
+        
+        # Assert Gender is deleted
+        self.assertNotIn("Gender", app.SESSION["df"].columns)
+        
+        # Assert Q1_1 is renamed
+        self.assertIn("Q1_1_new", app.SESSION["df"].columns)
+        self.assertNotIn("Q1_1", app.SESSION["df"].columns)
+        
+        # Assert new labels are set
+        dict_q1_new = next(v for v in app.SESSION["dictionary"] if v["variable_name"] == "Q1_1_new")
+        self.assertEqual(dict_q1_new["variable_label"], "New Q1_1 Label")
+        self.assertEqual(dict_q1_new["value_labels_dict"].get(1) or dict_q1_new["value_labels_dict"].get("1"), "Checked")
+        self.assertEqual(dict_q1_new["value_labels_dict"].get(0) or dict_q1_new["value_labels_dict"].get("0"), "Unchecked")
+        
+        # Assert new variable computed
+        self.assertIn("computed_var", app.SESSION["df"].columns)
+        self.assertEqual(app.SESSION["df"]["computed_var"].iloc[0], 5)
+        
+        # Assert missing values set
+        self.assertEqual(dict_q1_new["missing_values"], "99")
+        
+        # Assert multi response group updated cascade in DB
+        conn = app.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT variables FROM multi_response_groups WHERE dataset_id = ? AND group_id = ?", (project_id, "grp-q1"))
+        grp_vars = json.loads(cursor.fetchone()["variables"])
+        self.assertIn("Q1_1_new", grp_vars)
+        self.assertNotIn("Q1_1", grp_vars)
+        conn.close()
+        
+        # 7. Cleanup
+        if os.path.exists(temp_sav_path):
+            os.remove(temp_sav_path)
+        shutil.rmtree(temp_sav_dir)
+        app.SESSION["id"] = None
+        app.SESSION["df"] = None
+        app.SESSION["meta"] = None
+        app.SESSION["dictionary"] = None
+        app.SESSION["file_path"] = None
+        app.SESSION["multi_response_groups"] = {}
+
+    def test_get_all_frequencies(self):
+        """Verify get_all_frequencies endpoint calculates stats for all variables and multi-response groups."""
+        # 1. Setup temporary SAV file
+        temp_sav_dir = tempfile.mkdtemp()
+        temp_sav_path = os.path.join(temp_sav_dir, "test_frequencies_all.sav")
+        original_sav_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sample_data.sav')
+        import shutil
+        shutil.copyfile(original_sav_path, temp_sav_path)
+        
+        # 2. Setup SESSION
+        df, meta = app.parse_spss_file(temp_sav_path)
+        app.SESSION["id"] = "test-freq-id"
+        app.SESSION["df"] = df
+        app.SESSION["meta"] = meta
+        app.SESSION["dictionary"] = app.extract_data_dictionary(df, meta)
+        app.SESSION["file_path"] = temp_sav_path
+        app.SESSION["multi_response_groups"] = {
+            "grp-q1": {
+                "group_id": "grp-q1",
+                "group_name": "Q1_Group",
+                "group_label": "Q1 Multi-Response Group",
+                "variables": ["Q1_1", "Q1_2"],
+                "checked_value": "1"
+            }
+        }
+        
+        # 3. Call endpoint via app function
+        res = app.get_all_frequencies()
+        
+        # 4. Assertions
+        # Check that we received results for both groups and single variables
+        self.assertGreater(len(res), 0)
+        
+        # Verify group stats
+        group_res = next((item for item in res if item.get("is_group")), None)
+        self.assertIsNotNone(group_res)
+        self.assertEqual(group_res["group_id"], "grp-q1")
+        self.assertEqual(group_res["group_name"], "Q1_Group")
+        self.assertIn("distribution", group_res)
+        
+        # Verify single variable stats
+        single_res = next((item for item in res if not item.get("is_group")), None)
+        self.assertIsNotNone(single_res)
+        self.assertIn("variable_name", single_res)
+        self.assertIn("distribution", single_res)
+        
+        # 5. Cleanup
+        if os.path.exists(temp_sav_path):
+            os.remove(temp_sav_path)
+        shutil.rmtree(temp_sav_dir)
+        app.SESSION["id"] = None
+        app.SESSION["df"] = None
+        app.SESSION["meta"] = None
+        app.SESSION["dictionary"] = None
+        app.SESSION["file_path"] = None
+        app.SESSION["multi_response_groups"] = {}
+
 if __name__ == '__main__':
     unittest.main()
 

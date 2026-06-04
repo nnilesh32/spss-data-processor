@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SPSS Online Data Processor</title>
-    <link rel="stylesheet" href="/static/style.css?v=1.0.3">
+    <link rel="stylesheet" href="/static/style.css?v=1.0.4">
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body>
+<body class="light-theme">
 
     <!-- App Header -->
     <header>
@@ -42,11 +42,7 @@
             </button>
         </div>
         
-        <div class="header-actions" id="header-actions" style="display: none;">
-            <button class="btn btn-secondary btn-icon-only" id="btn-toggle-theme" title="Toggle Light/Dark Theme">
-                <i data-lucide="moon" id="theme-icon" style="width: 14px; height: 14px;"></i>
-            </button>
-        </div>
+        <div class="header-actions" id="header-actions" style="display: none;"></div>
     </header>
 
     <!-- Main Workspace -->
@@ -107,9 +103,29 @@
                             <span id="active-filename-var" style="font-size: 0.85em; font-weight: normal; opacity: 0.8; margin-left: 0.25rem; font-family: monospace;"></span>
                         </h2>
                         <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <!-- Delete Variables Button -->
+                            <button class="btn btn-danger" id="btn-delete-vars-card" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Delete variables from dataset">
+                                <i data-lucide="trash-2" style="width: 12px; height: 12px;"></i> Delete Variables
+                            </button>
+                            <!-- Rename Variable Button -->
+                            <button class="btn btn-secondary" id="btn-rename-var-card" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Rename variable">
+                                <i data-lucide="edit-3" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Rename Variable
+                            </button>
+                            <!-- Rename Label Button -->
+                            <button class="btn btn-secondary" id="btn-rename-label-card" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Modify variable label">
+                                <i data-lucide="tag" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Rename Label
+                            </button>
+                            <!-- Execute Syntax Button -->
+                            <button class="btn btn-secondary" id="btn-execute-syntax-card" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: none; align-items: center; gap: 0.25rem;" title="Execute SPSS Syntax code or file">
+                                <i data-lucide="play" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Execute Syntax
+                            </button>
                             <!-- Export Variable Dictionary Button -->
                             <button class="btn btn-secondary" id="btn-export-dict-card" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Export Data Dictionary to Excel">
                                 <i data-lucide="download" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Export Dictionary
+                            </button>
+                            <!-- Export SAV File Button -->
+                            <button class="btn btn-secondary" id="btn-export-sav-var" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Download the modified SPSS (.sav) file">
+                                <i data-lucide="file-down" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Export SAV File
                             </button>
                             <div class="search-container" style="width: 250px; margin: 0;">
                                 <i data-lucide="search" style="width: 14px; height: 14px;"></i>
@@ -176,6 +192,10 @@
                             <button class="btn btn-secondary" id="btn-export-data-view" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Export filtered Cases to Excel">
                                 <i data-lucide="download" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Export Data
                             </button>
+                            <!-- Export SAV File Button -->
+                            <button class="btn btn-secondary" id="btn-export-sav-data" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;" title="Download the modified SPSS (.sav) file">
+                                <i data-lucide="file-down" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i> Export SAV File
+                            </button>
 
                             <!-- Show Value Labels Switch -->
                             <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.75rem; user-select: none;">
@@ -239,108 +259,17 @@
                         </ul>
                     </div>
                 </div>
-
                 <!-- Frequency Analysis Workspace -->
-                <div id="freq-workspace" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; height: 100%; min-width: 0;">
-                    
-                    <!-- Select a variable placeholder -->
-                    <div id="freq-selection-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); gap: 0.75rem; border: 1px dashed var(--border-color); border-radius: 8px; background: rgba(15,23,42,0.1);">
-                        <i data-lucide="mouse-pointer-click" style="width: 32px; height: 32px;"></i>
-                        <p style="font-size: 0.8rem;">Select a variable or group from the list on the left to calculate and display frequency stats.</p>
-                    </div>
-
-                    <!-- Variable details panel (Frequency middle + right layout) -->
-                    <div class="workspace-layout" id="workspace-layout" style="display: none; height: 100%; min-height: 0;">
-                        <!-- Middle Pane Column - Frequency Stats & Chart -->
-                        <div class="workspace-column" id="workspace-middle-pane" style="flex: 1.2; overflow-y: auto; height: 100%; display: flex; flex-direction: column; gap: 0.75rem; min-width: 0;">
-                            
-                            <!-- Frequency Tab Pane -->
-                            <div class="tab-pane" id="tab-pane-frequency" style="display: flex; flex-direction: column; gap: 0.75rem; width: 100%;">
-                                <!-- Frequency/Stats Card -->
-                                <div class="card">
-                                    <h2 class="card-title" id="display-var-title">
-                                        <span class="card-title-left"><i data-lucide="table"></i> Frequency Distribution</span>
-                                    </h2>
-                                    <div class="table-container">
-                                        <table id="stats-table">
-                                            <thead>
-                                                <!-- Dynamic based on single vs multi -->
-                                            </thead>
-                                            <tbody>
-                                                <!-- Dynamic -->
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-
-                                <!-- Chart Visualization Card -->
-                                <div class="card">
-                                    <div class="card-title">
-                                        <span class="card-title-left"><i data-lucide="bar-chart-2"></i> Distribution Chart</span>
-                                        <div class="chart-header-actions">
-                                            <div class="toggle-group" id="chart-metric-toggle">
-                                                <button class="toggle-btn active" data-metric="frequency" id="toggle-freq-btn">Count</button>
-                                                <button class="toggle-btn" data-metric="percent" id="toggle-pct-btn">Percentage (%)</button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="chart-container">
-                                        <canvas id="distribution-chart"></canvas>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Right Pane Column - Metadata/Attributes -->
-                        <div class="workspace-column" id="workspace-right-pane" style="flex: 0.8; overflow-y: auto; height: 100%; display: flex; flex-direction: column; gap: 0.75rem; min-width: 0;">
-                            <!-- Metadata / Attributes Card -->
-                            <div class="card" id="attributes-card">
-                                <h2 class="card-title">
-                                    <span class="card-title-left"><i data-lucide="info"></i> Collapsible Attributes</span>
-                                </h2>
-                                <div class="metadata-grid">
-                                    <div class="meta-item">
-                                        <div class="meta-label">Variable Name</div>
-                                        <div class="meta-value" id="attr-name">-</div>
-                                    </div>
-                                    <div class="meta-item">
-                                        <div class="meta-label">Measurement Level</div>
-                                        <div class="meta-value" id="attr-level">-</div>
-                                    </div>
-                                    <div class="meta-item">
-                                        <div class="meta-label">Data Type</div>
-                                        <div class="meta-value" id="attr-type">-</div>
-                                    </div>
-                                    <div class="meta-item">
-                                        <div class="meta-label">Display Format</div>
-                                        <div class="meta-value" id="attr-format">-</div>
-                                    </div>
-                                </div>
-                                <div class="form-group" style="margin-top: 0.25rem;">
-                                    <label>Variable Label</label>
-                                    <input type="text" id="attr-label" readonly style="background: rgba(15, 23, 42, 0.2); border-color: rgba(255,255,255,0.03);">
-                                </div>
-                                <!-- Value Labels Collapsible -->
-                                <div class="collapsible-box" id="value-labels-collapsible">
-                                    <div class="collapsible-header" id="value-labels-toggle">
-                                        <span>Value Labels Map</span>
-                                        <i data-lucide="chevron-down" style="width: 14px; height: 14px;"></i>
-                                    </div>
-                                    <div class="collapsible-content" id="value-labels-content">
-                                        <div class="val-label-list" id="value-labels-list">
-                                            <!-- Dynamic -->
-                                        </div>
-                                    </div>
-                                </div>
-                                <div id="group-actions" style="display: none; border-top: 1px solid var(--border-color); padding-top: 0.5rem; margin-top: 0.25rem;">
-                                    <button class="btn btn-danger" id="btn-delete-group" style="width: 100%;">
-                                        <i data-lucide="trash-2"></i> Delete This Group
-                                    </button>
-                                </div>
-                            </div>
+                <div id="freq-workspace" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; height: 100%; min-width: 0; background: rgba(15,23,42,0.1); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.75rem; box-sizing: border-box;">
+                    <!-- Scrollable container for frequency tables -->
+                    <div id="freq-tables-container" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.75rem; height: 100%;">
+                        <div id="freq-selection-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; color: var(--text-muted); gap: 0.75rem;">
+                            <i data-lucide="mouse-pointer-click" style="width: 32px; height: 32px;"></i>
+                            <p style="font-size: 0.8rem;">Frequencies will be displayed here as soon as a dataset is loaded.</p>
                         </div>
                     </div>
                 </div>
+
             </div>
 
             <!-- VIEW 3: Cross-Tabulation View -->
@@ -463,6 +392,308 @@
         </div>
     </div>
 
+    <!-- Delete Variables Modal -->
+    <div class="modal-backdrop" id="modal-delete-vars">
+        <div class="modal-container" style="max-width: 500px;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <span style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary);">Delete Variables</span>
+                <button class="btn btn-secondary btn-icon-only" onclick="closeDeleteVarsModal()" style="padding: 0.25rem; border: none; background: transparent;" title="Close">
+                    <i data-lucide="x" style="width: 16px; height: 16px;"></i>
+                </button>
+            </div>
+            
+            <!-- Step 1: Config View -->
+            <div id="delete-vars-step-config" style="display: flex; flex-direction: column; gap: 1rem;">
+                
+                <!-- Inline Error/Warning Alerts -->
+                <div id="delete-vars-step-error" style="display: none; gap: 0.5rem; padding: 0.5rem 0.75rem; background: rgba(154, 27, 21, 0.12); border: 1px solid rgba(154, 27, 21, 0.25); border-radius: 6px; color: #ff8080; font-size: 0.75rem; align-items: center;">
+                    <i data-lucide="alert-circle" style="width: 14px; height: 14px; flex-shrink: 0;"></i>
+                    <span id="delete-vars-step-error-msg"></span>
+                </div>
+                
+                <!-- Presets dropdown selection -->
+                <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Select from Previous Deletion History:</label>
+                    <select id="delete-vars-preset-select" style="padding: 0.4rem 0.5rem; font-size: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; width: 100%;">
+                        <option value="">-- No Preset Selected --</option>
+                    </select>
+                </div>
+                
+                <!-- Tabs for Select checklist vs Upload file -->
+                <div class="delete-tabs" style="display: flex; border-bottom: 1px solid var(--border-color); gap: 1rem;">
+                    <button class="delete-tab-btn active" id="delete-tab-btn-list" onclick="switchDeleteTab('list')" style="padding: 0.5rem 0; background: transparent; border: none; border-bottom: 2px solid var(--accent-violet); color: var(--text-primary); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                        Select from List
+                    </button>
+                    <button class="delete-tab-btn" id="delete-tab-btn-file" onclick="switchDeleteTab('file')" style="padding: 0.5rem 0; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                        Upload Variable Names File (.txt)
+                    </button>
+                </div>
+                
+                <!-- Tab 1 content: Variable selection checklist -->
+                <div id="delete-tab-content-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
+                    
+                    <!-- Checklist Search input -->
+                    <div class="search-container" style="margin: 0; width: 100%;">
+                        <i data-lucide="search" style="width: 14px; height: 14px;"></i>
+                        <input type="text" id="delete-vars-search-input" placeholder="Search variables in checklist..." style="padding: 0.3rem 0.5rem 0.3rem 1.6rem; font-size: 0.75rem; background: rgba(15,23,42,0.45); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; width: 100%;">
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                        <span id="delete-vars-count-selected" style="font-size: 0.7rem; color: var(--text-muted);">0 variables selected</span>
+                        <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+                            <button class="btn btn-secondary" id="btn-delete-vars-select-matching" onclick="selectMatchingDeleteVars()" style="padding: 0.15rem 0.35rem; font-size: 0.65rem; display: none; border-color: var(--accent-cyan); color: var(--accent-cyan);" title="Check all variables matching your active search">Select All Matching</button>
+                            <button class="btn btn-secondary" onclick="toggleAllDeleteVars(true)" style="padding: 0.15rem 0.35rem; font-size: 0.65rem;">Select All</button>
+                            <button class="btn btn-secondary" onclick="toggleAllDeleteVars(false)" style="padding: 0.15rem 0.35rem; font-size: 0.65rem;">Clear All</button>
+                        </div>
+                    </div>
+                    
+                    <div id="delete-vars-checklist-container" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.35rem; background: rgba(15,23,42,0.25);">
+                        <!-- Filled dynamically -->
+                    </div>
+                </div>
+                
+                <!-- Tab 2 content: File upload dropzone -->
+                <div id="delete-tab-content-file" style="display: none; flex-direction: column; gap: 0.75rem;">
+                    <div id="delete-vars-dropzone" style="border: 2px dashed var(--border-color); border-radius: 6px; padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; cursor: pointer; background: rgba(15,23,42,0.25); transition: border-color var(--transition-smooth);">
+                        <i data-lucide="file-text" style="width: 28px; height: 28px; color: var(--text-muted);"></i>
+                        <span style="font-size: 0.75rem; color: var(--text-secondary);">Drag and drop a <strong>.txt</strong> file here, or click to browse.</span>
+                        <span style="font-size: 0.65rem; color: var(--text-muted);">(Names must be on separate lines)</span>
+                        <input type="file" id="delete-vars-file-input" accept=".txt" style="display: none;">
+                    </div>
+                    <div id="delete-vars-file-status" style="display: none; align-items: center; gap: 0.35rem; padding: 0.35rem 0.5rem; background: rgba(0, 181, 172, 0.1); border: 1px solid rgba(0, 181, 172, 0.2); border-radius: 4px; font-size: 0.7rem; color: var(--accent-cyan);">
+                        <i data-lucide="check-circle" style="width: 14px; height: 14px;"></i>
+                        <span id="delete-vars-file-name-text">filename.txt</span>
+                    </div>
+                </div>
+
+                <!-- Preset custom name field -->
+                <div style="display: flex; flex-direction: column; gap: 0.35rem; margin-top: 0.5rem;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Save this deletion list as a preset (Optional):</label>
+                    <input type="text" id="delete-vars-custom-preset-name" placeholder="E.g., Demographic clean list" style="padding: 0.4rem 0.5rem; font-size: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; font-family: var(--font-family);">
+                </div>
+                
+                <!-- Navigation -->
+                <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 0.5rem;">
+                    <button class="btn btn-secondary" onclick="closeDeleteVarsModal()">Cancel</button>
+                    <button class="btn btn-primary" id="btn-delete-vars-next" onclick="goToDeleteVarsConfirmation()">Next</button>
+                </div>
+            </div>
+            
+            <!-- Step 2: Confirmation View -->
+            <div id="delete-vars-step-confirm" style="display: none; flex-direction: column; gap: 1rem;">
+                <div class="alert alert-danger" style="display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem; background: rgba(154, 27, 21, 0.12); border: 1px solid rgba(154, 27, 21, 0.25); border-radius: 6px; color: #ff8080; font-size: 0.75rem; align-items: flex-start;">
+                    <i data-lucide="alert-triangle" style="width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px;"></i>
+                    <div>
+                        <strong style="display: block; margin-bottom: 0.15rem;">Warning: Permanent Deletion</strong>
+                        The selected variables will be permanently removed from the dataset on the disk. This cannot be undone.
+                    </div>
+                </div>
+                
+                <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">The following variables will be deleted:</label>
+                    <div id="delete-vars-confirmation-list" style="max-height: 150px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5rem; font-family: monospace; font-size: 0.7rem; color: var(--text-primary); background: rgba(15,23,42,0.35); word-break: break-all; line-height: 1.4;">
+                        <!-- Filled dynamically -->
+                    </div>
+                </div>
+                
+                <!-- Confirm Navigation -->
+                <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 0.5rem;">
+                    <button class="btn btn-secondary" onclick="goToDeleteVarsConfig()">Back</button>
+                    <button class="btn btn-danger" id="btn-delete-vars-confirm" onclick="executeVariablesDeletion()" style="display: inline-flex; align-items: center; gap: 0.25rem;">
+                        <i data-lucide="trash-2" style="width: 12px; height: 12px;"></i> Confirm Deletion
+                    </button>
+                </div>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- Rename Variable Modal -->
+    <div class="modal-backdrop" id="modal-rename-var">
+        <div class="modal-container" style="max-width: 500px;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <span style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary);">Rename Variable</span>
+                <button class="btn btn-secondary btn-icon-only" onclick="closeRenameVarModal()" style="padding: 0.25rem; border: none; background: transparent;" title="Close">
+                    <i data-lucide="x" style="width: 16px; height: 16px;"></i>
+                </button>
+            </div>
+
+            <!-- Inline Error Warning -->
+            <div id="rename-vars-step-error" style="display: none; gap: 0.5rem; padding: 0.5rem 0.75rem; background: rgba(154, 27, 21, 0.12); border: 1px solid rgba(154, 27, 21, 0.25); border-radius: 6px; color: #ff8080; font-size: 0.75rem; align-items: center; margin-bottom: 1rem;">
+                <i data-lucide="alert-circle" style="width: 14px; height: 14px; flex-shrink: 0;"></i>
+                <span id="rename-vars-step-error-msg"></span>
+            </div>
+            
+            <!-- Tabs for Single Rename, Bulk Names Upload -->
+            <div class="rename-tabs" style="display: flex; border-bottom: 1px solid var(--border-color); gap: 1rem; margin-bottom: 1rem;">
+                <button class="delete-tab-btn active" id="rename-tab-btn-single" onclick="switchRenameTab('single')" style="padding: 0.5rem 0; background: transparent; border: none; border-bottom: 2px solid var(--accent-violet); color: var(--text-primary); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                    Single Rename
+                </button>
+                <button class="delete-tab-btn" id="rename-tab-btn-bulk-names" onclick="switchRenameTab('bulk_names')" style="padding: 0.5rem 0; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                    Bulk Names File (.txt)
+                </button>
+            </div>
+            
+            <!-- Tab 1: Single Rename Form -->
+            <div id="rename-tab-content-single" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Select Variable:</label>
+                    <select id="rename-var-select" style="padding: 0.4rem 0.5rem; font-size: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; width: 100%;">
+                        <option value="">-- Select Variable --</option>
+                    </select>
+                </div>
+                
+                <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">New Variable Name:</label>
+                    <input type="text" id="rename-var-new-name" placeholder="E.g. age_years" style="padding: 0.4rem 0.5rem; font-size: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; font-family: var(--font-family);">
+                </div>
+            </div>
+            
+            <!-- Tab 2: Bulk Names Upload -->
+            <div id="rename-tab-content-bulk-names" style="display: none; flex-direction: column; gap: 0.75rem;">
+                <div id="rename-bulk-names-dropzone" style="border: 2px dashed var(--border-color); border-radius: 6px; padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; cursor: pointer; background: rgba(15,23,42,0.25); transition: border-color var(--transition-smooth);">
+                    <i data-lucide="file-text" style="width: 28px; height: 28px; color: var(--text-muted);"></i>
+                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Drag & drop a names file here, or click to browse.</span>
+                    <span style="font-size: 0.65rem; color: var(--text-muted);">(Lines must be formatted as: <strong>old_name = new_name</strong>)</span>
+                    <input type="file" id="rename-bulk-names-file-input" accept=".txt" style="display: none;">
+                </div>
+                <div id="rename-bulk-names-file-status" style="display: none; align-items: center; gap: 0.35rem; padding: 0.35rem 0.5rem; background: rgba(0, 181, 172, 0.1); border: 1px solid rgba(0, 181, 172, 0.2); border-radius: 4px; font-size: 0.7rem; color: var(--accent-cyan);">
+                    <i data-lucide="check-circle" style="width: 14px; height: 14px;"></i>
+                    <span id="rename-bulk-names-file-name-text">filename.txt</span>
+                </div>
+            </div>
+
+            <!-- Footer Action Buttons -->
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 1rem;">
+                <button class="btn btn-secondary" onclick="closeRenameVarModal()">Cancel</button>
+                <button class="btn btn-primary" id="btn-rename-var-save" onclick="executeVariableRename()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Rename Label Modal -->
+    <div class="modal-backdrop" id="modal-rename-label">
+        <div class="modal-container" style="max-width: 500px;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <span style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary);">Rename Label</span>
+                <button class="btn btn-secondary btn-icon-only" onclick="closeRenameLabelModal()" style="padding: 0.25rem; border: none; background: transparent;" title="Close">
+                    <i data-lucide="x" style="width: 16px; height: 16px;"></i>
+                </button>
+            </div>
+
+            <!-- Inline Error Warning -->
+            <div id="rename-label-step-error" style="display: none; gap: 0.5rem; padding: 0.5rem 0.75rem; background: rgba(154, 27, 21, 0.12); border: 1px solid rgba(154, 27, 21, 0.25); border-radius: 6px; color: #ff8080; font-size: 0.75rem; align-items: center; margin-bottom: 1rem;">
+                <i data-lucide="alert-circle" style="width: 14px; height: 14px; flex-shrink: 0;"></i>
+                <span id="rename-label-step-error-msg"></span>
+            </div>
+            
+            <!-- Tabs for Single Label Rename, Bulk Labels Upload -->
+            <div class="rename-tabs" style="display: flex; border-bottom: 1px solid var(--border-color); gap: 1rem; margin-bottom: 1rem;">
+                <button class="delete-tab-btn active" id="rename-label-tab-btn-single" onclick="switchRenameLabelTab('single')" style="padding: 0.5rem 0; background: transparent; border: none; border-bottom: 2px solid var(--accent-violet); color: var(--text-primary); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                    Single Rename
+                </button>
+                <button class="delete-tab-btn" id="rename-label-tab-btn-bulk-labels" onclick="switchRenameLabelTab('bulk_labels')" style="padding: 0.5rem 0; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); font-size: 0.75rem; font-weight: 700; cursor: pointer;">
+                    Bulk Labels File (.txt)
+                </button>
+            </div>
+            
+            <!-- Tab 1: Single Label Rename Form -->
+            <div id="rename-label-tab-content-single" style="display: flex; flex-direction: column; gap: 1rem;">
+                <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Select Variable:</label>
+                    <select id="rename-label-var-select" style="padding: 0.4rem 0.5rem; font-size: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; width: 100%;">
+                        <option value="">-- Select Variable --</option>
+                    </select>
+                </div>
+                
+                <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">New Variable Label:</label>
+                    <input type="text" id="rename-label-new-label" placeholder="E.g. Age in completed years" style="padding: 0.4rem 0.5rem; font-size: 0.75rem; background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; outline: none; font-family: var(--font-family);">
+                </div>
+            </div>
+            
+            <!-- Tab 2: Bulk Labels Upload -->
+            <div id="rename-label-tab-content-bulk-labels" style="display: none; flex-direction: column; gap: 0.75rem;">
+                <div id="rename-bulk-labels-dropzone" style="border: 2px dashed var(--border-color); border-radius: 6px; padding: 1.5rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; cursor: pointer; background: rgba(15,23,42,0.25); transition: border-color var(--transition-smooth);">
+                    <i data-lucide="file-text" style="width: 28px; height: 28px; color: var(--text-muted);"></i>
+                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Drag & drop a labels file here, or click to browse.</span>
+                    <span style="font-size: 0.65rem; color: var(--text-muted);">(Lines must be formatted as: <strong>variable_name = new_label</strong>)</span>
+                    <input type="file" id="rename-bulk-labels-file-input" accept=".txt" style="display: none;">
+                </div>
+                <div id="rename-bulk-labels-file-status" style="display: none; align-items: center; gap: 0.35rem; padding: 0.35rem 0.5rem; background: rgba(0, 181, 172, 0.1); border: 1px solid rgba(0, 181, 172, 0.2); border-radius: 4px; font-size: 0.7rem; color: var(--accent-cyan);">
+                    <i data-lucide="check-circle" style="width: 14px; height: 14px;"></i>
+                    <span id="rename-bulk-labels-file-name-text">filename.txt</span>
+                </div>
+            </div>
+
+            <!-- Footer Action Buttons -->
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 1rem;">
+                <button class="btn btn-secondary" onclick="closeRenameLabelModal()">Cancel</button>
+                <button class="btn btn-primary" id="btn-rename-label-save" onclick="executeVariableLabelRename()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Execute SPSS Syntax Modal -->
+    <div class="modal-backdrop" id="modal-execute-syntax">
+        <div class="modal-container" style="max-width: 950px; width: 90%;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <span style="font-size: 1.1rem; font-weight: 700; color: var(--text-primary);">Execute SPSS Syntax / Code</span>
+                <button class="btn btn-secondary btn-icon-only" onclick="closeExecuteSyntaxModal()" style="padding: 0.25rem; border: none; background: transparent;" title="Close">
+                    <i data-lucide="x" style="width: 16px; height: 16px;"></i>
+                </button>
+            </div>
+
+            <!-- Inline Error Warning -->
+            <div id="execute-syntax-step-error" style="display: none; gap: 0.5rem; padding: 0.5rem 0.75rem; background: rgba(154, 27, 21, 0.12); border: 1px solid rgba(154, 27, 21, 0.25); border-radius: 6px; color: #ff8080; font-size: 0.75rem; align-items: center; margin-bottom: 1rem;">
+                <i data-lucide="alert-circle" style="width: 14px; height: 14px; flex-shrink: 0;"></i>
+                <span id="execute-syntax-step-error-msg"></span>
+            </div>
+
+            <div style="display: flex; gap: 1rem; height: 450px;">
+                <!-- Left Panel: SPSS Syntax Editor -->
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">SPSS Syntax Input</div>
+                    <!-- Dropzone -->
+                    <div id="execute-syntax-dropzone" style="border: 2px dashed var(--border-color); border-radius: 6px; padding: 0.75rem; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; cursor: pointer; background: rgba(15,23,42,0.25); transition: border-color var(--transition-smooth); height: 74px; box-sizing: border-box; justify-content: center;">
+                        <i data-lucide="file-code" style="width: 20px; height: 20px; color: var(--text-muted);"></i>
+                        <span style="font-size: 0.7rem; color: var(--text-secondary);">Drag & drop an SPSS syntax file (.sps, .txt) here, or browse</span>
+                        <input type="file" id="execute-syntax-file-input" accept=".sps,.txt" style="display: none;">
+                    </div>
+                    <!-- Editor Container -->
+                    <div class="spss-editor-container" style="flex: 1; position: relative;">
+                        <div id="syntax-code-backdrop" class="spss-editor-backdrop"></div>
+                        <textarea id="syntax-code-input" class="spss-editor-textarea" placeholder="Type SPSS Syntax commands here...&#10;E.g.&#10;RENAME VARIABLES (Gender = gender_code).&#10;VARIABLE LABELS gender_code 'Gender Code'.&#10;VALUE LABELS gender_code 1 'Male' 2 'Female'.&#10;COMPUTE is_female = (gender_code = 2).&#10;EXECUTE." spellcheck="false" style="resize: none;"></textarea>
+                        <!-- Autocomplete Box -->
+                        <div id="spss-autocomplete-list" class="spss-autocomplete-dropdown" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Python/Pandas Preview -->
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary);">Real-Time Python / Pandas Preview</div>
+                    <!-- Info Card matching Dropzone height -->
+                    <div style="border: 1px solid var(--border-color); border-radius: 6px; padding: 0.75rem; display: flex; flex-direction: column; justify-content: center; gap: 0.25rem; background: rgba(15,23,42,0.15); height: 74px; box-sizing: border-box;">
+                        <div style="font-size: 0.7rem; color: var(--text-secondary); display: flex; align-items: center; gap: 0.25rem;">
+                            <i data-lucide="info" style="width: 12px; height: 12px; color: var(--accent-cyan);"></i>
+                            <strong>Real-time Translation Status</strong>
+                        </div>
+                        <span style="font-size: 0.65rem; color: var(--text-muted);">SPSS commands are automatically parsed and translated to Pandas code blocks as you type.</span>
+                    </div>
+                    <pre id="syntax-pandas-preview" style="flex: 1; margin: 0; padding: 0.75rem; font-size: 0.75rem; background: #2b2e36; border: 1px solid var(--border-color); color: #ffffff; border-radius: 6px; overflow: auto; font-family: monospace; white-space: pre-wrap; word-break: break-all;"></pre>
+                </div>
+            </div>
+
+            <!-- Footer Action Buttons -->
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border-color); padding-top: 0.75rem; margin-top: 1rem;">
+                <button class="btn btn-secondary" onclick="closeExecuteSyntaxModal()">Cancel</button>
+                <button class="btn btn-primary" id="btn-execute-syntax-run" style="display: inline-flex; align-items: center; gap: 0.25rem;">
+                    <i data-lucide="play" style="width: 14px; height: 14px;"></i> Run Syntax
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Global Excel-like Column Filter Dropdown Overlay -->
     <div id="col-filter-dropdown" style="display: none; position: absolute; z-index: 1000; width: 220px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: var(--shadow-premium); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); padding: 0.5rem; flex-direction: column; gap: 0.5rem;">
         <!-- Search bar -->
@@ -481,6 +712,6 @@
     </div>
 
     <!-- Script Entry -->
-    <script src="/static/app.js?v=1.0.3"></script>
+    <script src="/static/app.js?v=1.0.8"></script>
 </body>
 </html>

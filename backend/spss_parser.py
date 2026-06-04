@@ -10,7 +10,7 @@ def parse_spss_file(file_path):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"SPSS file not found at: {file_path}")
     
-    df, meta = pyreadstat.read_sav(file_path)
+    df, meta = pyreadstat.read_sav(file_path, user_missing=True)
     return df, meta
 
 def extract_data_dictionary(df, meta):

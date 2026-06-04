@@ -277,11 +277,13 @@ body.light-theme .variable-item.active {
 .variable-item.active .var-icon {
     color: var(--accent-violet);
 }
-
 .var-info {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
     overflow: hidden;
+    width: 100%;
 }
 
 .var-name {
@@ -291,15 +293,18 @@ body.light-theme .variable-item.active {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex-shrink: 0;
+    max-width: 45%;
 }
 
 .var-label {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-top: 0.05rem;
+    margin-top: 0;
+    flex-grow: 1;
 }
 
 /* Main Content Area */
@@ -1274,7 +1279,149 @@ body.light-theme .spss-grid-table td.row-num-cell {
     padding: 0.3rem 0.5rem !important;
 }
 
+/* Variable Deletion Modal Tabs */
+.delete-tab-btn {
+    padding: 0.5rem 0;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+}
+.delete-tab-btn:hover {
+    color: var(--text-primary);
+}
+.delete-tab-btn.active {
+    border-bottom: 2px solid var(--accent-violet) !important;
+    color: var(--text-primary) !important;
+}
 
+/* Modal text file upload dropzone hover styling */
+#delete-vars-dropzone.dragover,
+#rename-bulk-names-dropzone.dragover,
+#rename-bulk-labels-dropzone.dragover {
+    border-color: var(--accent-cyan) !important;
+    background: rgba(0, 181, 172, 0.05) !important;
+}
 
+/* SPSS Syntax Editor Container and Layers */
+.spss-editor-container {
+    position: relative;
+    flex: 1;
+    min-height: 200px;
+    background: #1e1e1e;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    overflow: hidden;
+    font-family: Consolas, Monaco, "Lucida Console", "Courier New", monospace !important;
+    transition: border-color var(--transition-smooth), box-shadow var(--transition-smooth);
+}
 
+.spss-editor-container:focus-within {
+    border-color: var(--accent-violet) !important;
+    box-shadow: 0 0 0 2px rgba(83, 0, 149, 0.2) !important;
+}
+
+.spss-editor-backdrop, .spss-editor-textarea {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0.5rem;
+    border: none;
+    outline: none;
+    font-family: Consolas, Monaco, "Lucida Console", "Courier New", monospace !important;
+    font-size: 0.75rem !important;
+    line-height: 1.4 !important;
+    white-space: pre !important;
+    overflow: auto !important;
+    box-sizing: border-box !important;
+    text-align: left !important;
+}
+
+.spss-editor-textarea {
+    background: transparent !important;
+    color: transparent !important;
+    caret-color: #ffffff !important; /* White typing cursor */
+    resize: none !important;
+    z-index: 2;
+}
+
+.spss-editor-backdrop {
+    background: #1e1e1e !important;
+    color: #abb2bf !important;
+    z-index: 1;
+    pointer-events: none;
+}
+
+/* Highlight Token Colors */
+.spss-comment {
+    color: #5c6370 !important;
+    font-style: italic !important;
+}
+
+.spss-string {
+    color: #98c379 !important; /* Green */
+}
+
+.spss-number {
+    color: #d19a66 !important; /* Orange */
+}
+
+.spss-keyword {
+    color: #c678dd !important; /* Purple */
+    font-weight: bold !important;
+}
+
+.spss-variable-valid {
+    color: #61afef !important; /* Blue/Teal */
+}
+
+.spss-variable-invalid {
+    color: #e06c75 !important; /* Red */
+    text-decoration: underline wavy #e06c75 !important;
+}
+
+/* Autocomplete suggestions box styling */
+.spss-autocomplete-dropdown {
+    position: absolute;
+    z-index: 1000;
+    max-height: 150px;
+    width: 220px;
+    background: #21252b;
+    border: 1px solid #181a1f;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 0.25rem 0;
+}
+
+.spss-autocomplete-item {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.7rem;
+    color: #abb2bf;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: Consolas, Monaco, "Lucida Console", "Courier New", monospace !important;
+}
+
+.spss-autocomplete-item.active {
+    background: #3e4451 !important;
+    color: #ffffff !important;
+}
+
+.spss-autocomplete-meta {
+    font-size: 0.6rem;
+    color: #5c6370;
+    font-style: italic;
+}
 

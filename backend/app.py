@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import datetime
 import pandas as pd
+import pyreadstat
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -78,6 +79,24 @@ def init_db():
         FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
     )
     """)
+    
+    # Deleted variables presets history table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS deleted_variable_presets (
+        id TEXT PRIMARY KEY,
+        dataset_id TEXT,
+        name TEXT NOT NULL,
+        variables TEXT NOT NULL, -- JSON string list of variable names
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (dataset_id) REFERENCES datasets(id) ON DELETE CASCADE
+    )
+    """)
+    
+    try:
+        cursor.execute("ALTER TABLE deleted_variable_presets ADD COLUMN dataset_id TEXT")
+    except sqlite3.OperationalError:
+        pass
+    
     conn.commit()
     conn.close()
 
@@ -293,6 +312,52 @@ def get_all_projects():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch projects: {str(e)}")
 
+@app.delete("/api/project/{project_id}")
+def delete_project(project_id: str):
+    """
+    Deletes a project/dataset by ID, removes its file from disk, and updates the database.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM datasets WHERE id = ?", (project_id,))
+        row = cursor.fetchone()
+        
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Project not found.")
+            
+        file_path = row["file_path"]
+        
+        # Enable PRAGMA foreign_keys = ON to ensure cascading delete
+        cursor.execute("PRAGMA foreign_keys = ON")
+        cursor.execute("DELETE FROM datasets WHERE id = ?", (project_id,))
+        conn.commit()
+        conn.close()
+        
+        # Delete file from disk if it exists
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as fe:
+                print(f"Error deleting file from disk: {fe}")
+                
+        # If the deleted project was the active session, reset it
+        if SESSION["id"] == project_id:
+            SESSION["id"] = None
+            SESSION["df"] = None
+            SESSION["meta"] = None
+            SESSION["dictionary"] = None
+            SESSION["file_path"] = None
+            SESSION["original_filename"] = None
+            SESSION["multi_response_groups"] = {}
+            
+        return {"message": "Project deleted successfully."}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete project: {str(e)}")
+
+
 @app.post("/api/project/load/{project_id}")
 def load_project(project_id: str):
     """
@@ -402,6 +467,55 @@ def get_variable_details(var_name: str):
         return stats
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/frequencies/all")
+def get_all_frequencies():
+    """
+    Returns detailed metadata and frequency stats for all variables and multi-response groups.
+    """
+    if SESSION["df"] is None:
+        raise HTTPException(status_code=400, detail="No active dataset. Please upload a file first.")
+        
+    try:
+        results = []
+        
+        # 1. Compute multi-response groups
+        for group_id, group_def in SESSION["multi_response_groups"].items():
+            try:
+                stats = get_multi_response_stats(
+                    SESSION["df"],
+                    SESSION["meta"],
+                    group_def["variables"],
+                    group_def["group_name"],
+                    group_def["group_label"],
+                    checked_value=group_def.get("checked_value")
+                )
+                stats["group_id"] = group_id
+                stats["variables"] = group_def["variables"]
+                stats["is_group"] = True
+                results.append(stats)
+            except Exception as e:
+                print(f"Error calculating stats for group {group_id}: {e}")
+        
+        # 2. Compute single variables
+        for var_dict in SESSION["dictionary"]:
+            var_name = var_dict.get("variable_name")
+            if not var_name or var_name not in SESSION["df"].columns:
+                continue
+            try:
+                stats = get_variable_stats(SESSION["df"], SESSION["meta"], var_name)
+                stats["measurement_level"] = var_dict.get("measurement_level", "unknown")
+                stats["type"] = var_dict.get("type", "unknown")
+                stats["format"] = var_dict.get("format", "")
+                stats["value_labels"] = var_dict.get("value_labels_dict", {})
+                stats["is_group"] = False
+                results.append(stats)
+            except Exception as e:
+                print(f"Error calculating stats for variable {var_name}: {e}")
+                
+        return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -879,6 +993,557 @@ def get_column_unique_values(column: str):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to retrieve unique column values: {str(e)}")
+
+
+class RenameVariableRequest(BaseModel):
+    mode: str  # "single", "bulk_names", "bulk_labels"
+    variable: str | None = None
+    new_name: str | None = None
+    new_label: str | None = None
+    renames: dict[str, str] | None = None
+    labels: dict[str, str] | None = None
+
+@app.post("/api/variables/rename")
+def rename_variables(req: RenameVariableRequest):
+    if SESSION["df"] is None:
+        raise HTTPException(status_code=400, detail="No active dataset. Please upload a file first.")
+        
+    df = SESSION["df"]
+    meta = SESSION["meta"]
+    project_id = SESSION["id"]
+    file_path = SESSION["file_path"]
+    
+    import re
+    import shutil
+    
+    def is_valid_variable_name(name: str) -> bool:
+        return bool(re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", name)) and len(name) <= 64
+
+    variable_rename_map = {}
+    label_rename_map = {}
+    
+    if req.mode == "single":
+        if not req.variable or not req.new_name:
+            raise HTTPException(status_code=400, detail="Variable and new_name are required for mode 'single'")
+        if req.variable not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Variable '{req.variable}' not found in dataset.")
+        if not is_valid_variable_name(req.new_name):
+            raise HTTPException(status_code=400, detail=f"Invalid variable name '{req.new_name}'. Must start with a letter and contain only alphanumeric characters and underscores.")
+        if req.new_name != req.variable and req.new_name in df.columns:
+            raise HTTPException(status_code=400, detail=f"Variable name '{req.new_name}' already exists in dataset.")
+            
+        variable_rename_map[req.variable] = req.new_name
+        if req.new_label is not None:
+            label_rename_map[req.new_name] = req.new_label
+            
+    elif req.mode == "bulk_names":
+        if not req.renames:
+            raise HTTPException(status_code=400, detail="Renames map is required for mode 'bulk_names'")
+        
+        for old, new in req.renames.items():
+            if old not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Variable '{old}' not found in dataset.")
+            if not is_valid_variable_name(new):
+                raise HTTPException(status_code=400, detail=f"Invalid variable name '{new}'. Must start with a letter and contain only alphanumeric characters and underscores.")
+            
+            non_renamed_cols = [c for c in df.columns if c not in req.renames]
+            if new in non_renamed_cols:
+                raise HTTPException(status_code=400, detail=f"Target variable name '{new}' already exists in dataset.")
+                
+            variable_rename_map[old] = new
+            
+        new_names_list = list(req.renames.values())
+        if len(new_names_list) != len(set(new_names_list)):
+            raise HTTPException(status_code=400, detail="Duplicate target names found in bulk rename payload.")
+            
+    elif req.mode == "bulk_labels":
+        if not req.labels:
+            raise HTTPException(status_code=400, detail="Labels map is required for mode 'bulk_labels'")
+        for var, label in req.labels.items():
+            if var not in df.columns:
+                raise HTTPException(status_code=400, detail=f"Variable '{var}' not found in dataset.")
+            label_rename_map[var] = label
+            
+    else:
+        raise HTTPException(status_code=400, detail="Invalid mode. Must be 'single', 'bulk_names', or 'bulk_labels'.")
+        
+    if not variable_rename_map and not label_rename_map:
+        return {
+            "message": "No changes requested.",
+            "dictionary": SESSION["dictionary"]
+        }
+        
+    backup_path = file_path + ".bak"
+    shutil.copyfile(file_path, backup_path)
+    
+    try:
+        if variable_rename_map:
+            new_df = df.rename(columns=variable_rename_map)
+        else:
+            new_df = df.copy()
+            
+        remaining_cols = list(new_df.columns)
+        
+        col_labels_map = dict(zip(meta.column_names, meta.column_labels))
+        
+        def remap_dict_keys(d, mapping):
+            new_d = {}
+            if d:
+                for k, v in d.items():
+                    if k in mapping:
+                        new_d[mapping[k]] = v
+                    else:
+                        new_d[k] = v
+            return new_d
+            
+        updated_labels_map = {}
+        for col in df.columns:
+            current_label = col_labels_map.get(col, "")
+            current_name = col
+            if col in variable_rename_map:
+                current_name = variable_rename_map[col]
+            if current_name in label_rename_map:
+                current_label = label_rename_map[current_name]
+            updated_labels_map[current_name] = current_label
+            
+        new_column_labels = [updated_labels_map[col] for col in remaining_cols]
+        
+        new_variable_value_labels = remap_dict_keys(getattr(meta, "variable_value_labels", {}), variable_rename_map)
+        new_missing_ranges = remap_dict_keys(getattr(meta, "missing_ranges", {}), variable_rename_map)
+        new_formats = remap_dict_keys(getattr(meta, "original_variable_types", {}), variable_rename_map)
+        new_measure = remap_dict_keys(getattr(meta, "variable_measure", {}), variable_rename_map)
+        new_display_width = remap_dict_keys(getattr(meta, "variable_display_width", {}), variable_rename_map)
+        
+        pyreadstat.write_sav(
+            new_df,
+            file_path,
+            column_labels=new_column_labels,
+            variable_value_labels=new_variable_value_labels,
+            missing_ranges=new_missing_ranges,
+            variable_format=new_formats,
+            variable_measure=new_measure,
+            variable_display_width=new_display_width
+        )
+        
+        reloaded_df, reloaded_meta = parse_spss_file(file_path)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if variable_rename_map:
+            cursor.execute("SELECT group_id, variables FROM multi_response_groups WHERE dataset_id = ?", (project_id,))
+            groups = cursor.fetchall()
+            for g in groups:
+                g_id = g["group_id"]
+                g_vars = json.loads(g["variables"])
+                has_updates = False
+                updated_vars = []
+                for v in g_vars:
+                    if v in variable_rename_map:
+                        updated_vars.append(variable_rename_map[v])
+                        has_updates = True
+                    else:
+                        updated_vars.append(v)
+                if has_updates:
+                    cursor.execute("UPDATE multi_response_groups SET variables = ? WHERE dataset_id = ? AND group_id = ?", (json.dumps(updated_vars), project_id, g_id))
+                    if g_id in SESSION["multi_response_groups"]:
+                        SESSION["multi_response_groups"][g_id]["variables"] = updated_vars
+                        
+        conn.commit()
+        conn.close()
+        
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+            
+        SESSION["df"] = reloaded_df
+        SESSION["meta"] = reloaded_meta
+        SESSION["dictionary"] = extract_data_dictionary(reloaded_df, reloaded_meta)
+        
+        return {
+            "message": "Variables renamed successfully.",
+            "mode": req.mode,
+            "dictionary": SESSION["dictionary"]
+        }
+        
+    except Exception as e:
+        if os.path.exists(backup_path):
+            try:
+                shutil.copyfile(backup_path, file_path)
+                os.remove(backup_path)
+            except Exception as restore_err:
+                print(f"Error restoring backup: {restore_err}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to rename variables: {str(e)}")
+
+
+class ExecuteSyntaxRequest(BaseModel):
+    syntax: str
+
+@app.post("/api/variables/execute-syntax")
+def execute_syntax(req: ExecuteSyntaxRequest):
+    if SESSION["df"] is None:
+        raise HTTPException(status_code=400, detail="No active dataset. Please upload a file first.")
+        
+    df = SESSION["df"]
+    meta = SESSION["meta"]
+    project_id = SESSION["id"]
+    file_path = SESSION["file_path"]
+    
+    import shutil
+    from spss_syntax_parser import split_spss_syntax, execute_spss_statement
+    
+    backup_path = file_path + ".bak"
+    shutil.copyfile(file_path, backup_path)
+    
+    try:
+        statements = split_spss_syntax(req.syntax)
+        
+        # In-memory working copies
+        working_df = df.copy()
+        
+        variable_rename_map = {}
+        label_rename_map = {}
+        value_labels_map = {}
+        missing_ranges_map = {}
+        logs = []
+        
+        for stmt in statements:
+            working_df, meta = execute_spss_statement(
+                stmt, 
+                working_df, 
+                meta, 
+                variable_rename_map, 
+                label_rename_map, 
+                value_labels_map, 
+                missing_ranges_map, 
+                logs
+            )
+            
+        remaining_cols = list(working_df.columns)
+        
+        # Rebuild metadata structures
+        col_labels_map = dict(zip(meta.column_names, meta.column_labels))
+        reverse_rename = {v: k for k, v in variable_rename_map.items()}
+        
+        new_column_labels = []
+        for col in remaining_cols:
+            orig_col = reverse_rename.get(col, col)
+            label = label_rename_map.get(col, col_labels_map.get(orig_col, ""))
+            new_column_labels.append(label)
+            
+        new_variable_value_labels = {}
+        for old_col, labels in getattr(meta, "variable_value_labels", {}).items():
+            new_col = variable_rename_map.get(old_col, old_col)
+            if new_col in remaining_cols:
+                new_variable_value_labels[new_col] = labels
+        for col, labels in value_labels_map.items():
+            if col in remaining_cols:
+                new_variable_value_labels[col] = labels
+                
+        new_missing_ranges = {}
+        for old_col, val in getattr(meta, "missing_ranges", {}).items():
+            new_col = variable_rename_map.get(old_col, old_col)
+            if new_col in remaining_cols:
+                new_missing_ranges[new_col] = val
+        for col, val in missing_ranges_map.items():
+            if col in remaining_cols:
+                new_missing_ranges[col] = val
+                
+        new_formats = {}
+        for old_col, val in getattr(meta, "original_variable_types", {}).items():
+            new_col = variable_rename_map.get(old_col, old_col)
+            if new_col in remaining_cols:
+                new_formats[new_col] = val
+                
+        new_measure = {}
+        for old_col, val in getattr(meta, "variable_measure", {}).items():
+            new_col = variable_rename_map.get(old_col, old_col)
+            if new_col in remaining_cols:
+                new_measure[new_col] = val
+                
+        new_display_width = {}
+        for old_col, val in getattr(meta, "variable_display_width", {}).items():
+            new_col = variable_rename_map.get(old_col, old_col)
+            if new_col in remaining_cols:
+                new_display_width[new_col] = val
+                
+        pyreadstat.write_sav(
+            working_df,
+            file_path,
+            column_labels=new_column_labels,
+            variable_value_labels=new_variable_value_labels,
+            missing_ranges=new_missing_ranges,
+            variable_format=new_formats,
+            variable_measure=new_measure,
+            variable_display_width=new_display_width
+        )
+        
+        reloaded_df, reloaded_meta = parse_spss_file(file_path)
+        
+        # Apply database updates for deleted or renamed columns in MR groups
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Cascade variable deletions / renames in groups
+        cursor.execute("SELECT group_id, variables FROM multi_response_groups WHERE dataset_id = ?", (project_id,))
+        groups = cursor.fetchall()
+        for g in groups:
+            g_id = g["group_id"]
+            g_vars = json.loads(g["variables"])
+            updated_vars = []
+            has_updates = False
+            for v in g_vars:
+                # If deleted
+                if v not in remaining_cols and variable_rename_map.get(v) not in remaining_cols:
+                    has_updates = True
+                    continue
+                # If renamed
+                elif v in variable_rename_map:
+                    updated_vars.append(variable_rename_map[v])
+                    has_updates = True
+                else:
+                    updated_vars.append(v)
+            
+            if has_updates:
+                if len(updated_vars) < 2:
+                    # delete group entirely if fewer than 2 variables remain
+                    cursor.execute("DELETE FROM multi_response_groups WHERE dataset_id = ? AND group_id = ?", (project_id, g_id))
+                    if g_id in SESSION["multi_response_groups"]:
+                        del SESSION["multi_response_groups"][g_id]
+                else:
+                    cursor.execute("UPDATE multi_response_groups SET variables = ? WHERE dataset_id = ? AND group_id = ?", (json.dumps(updated_vars), project_id, g_id))
+                    if g_id in SESSION["multi_response_groups"]:
+                        SESSION["multi_response_groups"][g_id]["variables"] = updated_vars
+                        
+        conn.commit()
+        conn.close()
+        
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+            
+        SESSION["df"] = reloaded_df
+        SESSION["meta"] = reloaded_meta
+        SESSION["dictionary"] = extract_data_dictionary(reloaded_df, reloaded_meta)
+        
+        # Update variable count in datasets table
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE datasets SET variable_count = ? WHERE id = ?", (len(reloaded_df.columns), project_id))
+        conn.commit()
+        conn.close()
+        
+        return {
+            "message": "Syntax executed successfully.",
+            "logs": logs,
+            "dictionary": SESSION["dictionary"]
+        }
+        
+    except Exception as e:
+        if os.path.exists(backup_path):
+            try:
+                shutil.copyfile(backup_path, file_path)
+                os.remove(backup_path)
+            except Exception as restore_err:
+                print(f"Error restoring backup: {restore_err}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to execute syntax: {str(e)}")
+
+
+class DeleteVariablesRequest(BaseModel):
+    variables: list[str]
+    preset_name: str | None = None
+
+@app.get("/api/variables/deletion-presets")
+def get_deletion_presets():
+    if SESSION["id"] is None:
+        return []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM deleted_variable_presets WHERE dataset_id = ? ORDER BY created_at DESC", (SESSION["id"],))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        presets = []
+        for row in rows:
+            presets.append({
+                "id": row["id"],
+                "name": row["name"],
+                "variables": json.loads(row["variables"]),
+                "created_at": row["created_at"]
+            })
+        return presets
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch presets: {str(e)}")
+
+@app.post("/api/variables/delete")
+def delete_variables(req: DeleteVariablesRequest):
+    if SESSION["df"] is None:
+        raise HTTPException(status_code=400, detail="No active dataset. Please upload a file first.")
+        
+    df = SESSION["df"]
+    meta = SESSION["meta"]
+    project_id = SESSION["id"]
+    file_path = SESSION["file_path"]
+    
+    # Validation
+    invalid_vars = [v for v in req.variables if v not in df.columns]
+    if invalid_vars:
+        raise HTTPException(status_code=400, detail=f"Variables not found in dataset: {', '.join(invalid_vars)}")
+        
+    if len(req.variables) >= len(df.columns):
+        raise HTTPException(status_code=400, detail="Cannot delete all variables from the dataset.")
+        
+    import shutil
+    import uuid
+    from datetime import datetime
+    
+    # Create file backup
+    backup_path = file_path + ".bak"
+    shutil.copyfile(file_path, backup_path)
+    
+    try:
+        # Drop columns from df
+        new_df = df.drop(columns=req.variables)
+        remaining_cols = list(new_df.columns)
+        
+        # Filter metadata
+        # Map from col name to label
+        col_labels_map = dict(zip(meta.column_names, meta.column_labels))
+        new_column_labels = [col_labels_map[col] for col in remaining_cols]
+        
+        # Filter value labels
+        new_variable_value_labels = {}
+        if getattr(meta, "variable_value_labels", None):
+            for col, labels in meta.variable_value_labels.items():
+                if col in remaining_cols:
+                    new_variable_value_labels[col] = labels
+                    
+        # Filter missing ranges
+        new_missing_ranges = {}
+        if getattr(meta, "missing_ranges", None):
+            for col, val in meta.missing_ranges.items():
+                if col in remaining_cols:
+                    new_missing_ranges[col] = val
+                    
+        # Filter formats
+        new_formats = {}
+        if getattr(meta, "original_variable_types", None):
+            for col, val in meta.original_variable_types.items():
+                if col in remaining_cols:
+                    new_formats[col] = val
+                    
+        # Filter measure
+        new_measure = {}
+        if getattr(meta, "variable_measure", None):
+            for col, val in meta.variable_measure.items():
+                if col in remaining_cols:
+                    new_measure[col] = val
+                    
+        # Filter display width
+        new_display_width = {}
+        if getattr(meta, "variable_display_width", None):
+            for col, val in meta.variable_display_width.items():
+                if col in remaining_cols:
+                    new_display_width[col] = val
+                    
+        # Write back to disk
+        pyreadstat.write_sav(
+            new_df,
+            file_path,
+            column_labels=new_column_labels,
+            variable_value_labels=new_variable_value_labels,
+            missing_ranges=new_missing_ranges,
+            variable_format=new_formats,
+            variable_measure=new_measure,
+            variable_display_width=new_display_width
+        )
+        
+        # Parse again to reload the session meta perfectly
+        reloaded_df, reloaded_meta = parse_spss_file(file_path)
+        
+        # Remove deleted variables from custom multi-response groups
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Update custom groups in database
+        cursor.execute("SELECT group_id, variables FROM multi_response_groups WHERE dataset_id = ?", (project_id,))
+        groups = cursor.fetchall()
+        for g in groups:
+            g_id = g["group_id"]
+            g_vars = json.loads(g["variables"])
+            updated_vars = [v for v in g_vars if v not in req.variables]
+            if not updated_vars:
+                cursor.execute("DELETE FROM multi_response_groups WHERE dataset_id = ? AND group_id = ?", (project_id, g_id))
+                if g_id in SESSION["multi_response_groups"]:
+                    del SESSION["multi_response_groups"][g_id]
+            else:
+                cursor.execute("UPDATE multi_response_groups SET variables = ? WHERE dataset_id = ? AND group_id = ?", (json.dumps(updated_vars), project_id, g_id))
+                if g_id in SESSION["multi_response_groups"]:
+                    SESSION["multi_response_groups"][g_id]["variables"] = updated_vars
+                    
+        # Update dataset properties in DB
+        cursor.execute("UPDATE datasets SET variable_count = ? WHERE id = ?", (len(remaining_cols), project_id))
+        
+        # Save deletion history preset
+        preset_id = str(uuid.uuid4())
+        p_name = req.preset_name.strip() if req.preset_name else f"Deleted on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        cursor.execute(
+            "INSERT INTO deleted_variable_presets (id, dataset_id, name, variables, created_at) VALUES (?, ?, ?, ?, ?)",
+            (preset_id, project_id, p_name, json.dumps(req.variables), datetime.now().isoformat())
+        )
+        
+        conn.commit()
+        conn.close()
+        
+        # Remove backup file on success
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+            
+        # Reload session data
+        SESSION["df"] = reloaded_df
+        SESSION["meta"] = reloaded_meta
+        SESSION["dictionary"] = extract_data_dictionary(reloaded_df, reloaded_meta)
+        
+        return {
+            "message": "Variables deleted successfully.",
+            "deleted_count": len(req.variables),
+            "remaining_count": len(remaining_cols),
+            "dictionary": SESSION["dictionary"]
+        }
+        
+    except Exception as e:
+        # Restore backup if failure occurs
+        if os.path.exists(backup_path):
+            try:
+                shutil.copyfile(backup_path, file_path)
+                os.remove(backup_path)
+            except Exception as restore_err:
+                print(f"Error restoring backup: {restore_err}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to delete variables: {str(e)}")
+
+
+@app.get("/api/data/download-sav")
+def download_sav_file():
+    """
+    Downloads the currently active SPSS .sav file.
+    """
+    if SESSION["file_path"] is None or not os.path.exists(SESSION["file_path"]):
+        raise HTTPException(status_code=400, detail="No active dataset or file not found.")
+        
+    filename = SESSION["original_filename"] or "dataset.sav"
+    if not filename.endswith(".sav"):
+        filename += ".sav"
+        
+    return FileResponse(
+        path=SESSION["file_path"],
+        filename=filename,
+        media_type="application/x-spss-sav"
+    )
 
 
 # Serve frontend static files
