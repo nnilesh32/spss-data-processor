@@ -36,3 +36,8 @@ data/
 # Environment files
 .env
 .env.*
+
+# ML / Cache / Experiment archives
+.keras/
+.matplotlib_cache/
+archive/
